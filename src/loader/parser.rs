@@ -141,7 +141,7 @@ impl<'a> Parser<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{error::Error, parser::Parser};
+    use crate::loader::{error::Error, parser::Parser};
 
     #[test]
     fn test_target() {

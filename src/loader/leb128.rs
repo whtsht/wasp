@@ -105,7 +105,7 @@ pub fn read_32(bytes: &[u8], signed: bool) -> Result<(u32, usize), Error> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
+    use crate::loader::{
         error::Error,
         leb128::{Leb128, Type},
     };

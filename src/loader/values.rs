@@ -77,7 +77,7 @@ impl<'a> Parser<'a> {
 mod tests {
     use core::cmp::Ordering;
 
-    use crate::parser::Parser;
+    use super::Parser;
 
     #[test]
     fn test_f32_ok() {

@@ -339,9 +339,9 @@ impl<'a> Parser<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{parser::Parser, sections::*};
+    use crate::binary::{FuncType, Mut, ResultType, ValType};
+    use crate::loader::{parser::Parser, sections::*};
     use wabt::wat2wasm;
-    use wasm_structs::{FuncType, Mut, NumType, ResultType, ValType};
 
     #[test]
     fn test_type_section() {
@@ -366,11 +366,8 @@ mod tests {
             Ok(Section {
                 size: 7,
                 value: vec![FuncType(
-                    ResultType(vec![
-                        ValType::NumType(NumType::I32),
-                        ValType::NumType(NumType::I32)
-                    ]),
-                    ResultType(vec![ValType::NumType(NumType::I32)])
+                    ResultType(vec![ValType::I32, ValType::I32]),
+                    ResultType(vec![ValType::I32])
                 )]
             })
         );
@@ -396,7 +393,7 @@ mod tests {
                     module: "test".into(),
                     name: "global".into(),
                     desc: ImportDesc::GlobalType(GlobalType {
-                        valtype: ValType::NumType(NumType::I32),
+                        valtype: ValType::I32,
                         mut_: Mut::Var
                     })
                 }]
@@ -493,7 +490,7 @@ mod tests {
                 size: 7,
                 value: vec![Global {
                     type_: GlobalType {
-                        valtype: ValType::NumType(NumType::I32),
+                        valtype: ValType::I32,
                         mut_: Mut::Const
                     },
                     value: Expr::new(vec![Instr::I32Const(100)])
@@ -629,7 +626,7 @@ mod tests {
                     func: Func0 {
                         locals: vec![Local {
                             n: 1,
-                            type_: ValType::NumType(NumType::F64)
+                            type_: ValType::F64
                         }],
                         body: Expr::new(vec![
                             Instr::LocalGet(0,),
