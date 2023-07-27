@@ -1,6 +1,6 @@
 use alloc::rc::Rc;
 
-use super::stack::{Stack, StackValue, Value};
+use super::stack::{Label, Stack, StackValue};
 use crate::binary::{Export, Func, FuncType, ImportDesc, Instr, Module, ResultType};
 
 pub type Addr = usize;
@@ -123,7 +123,13 @@ pub struct Runtime<E: HostEnv> {
     store: Store,
     stack: Stack,
     env: E,
-    next: usize,
+}
+
+#[derive(Debug)]
+pub enum ExecState {
+    Breaking(u32),
+    Continue,
+    Return,
 }
 
 impl<E: HostEnv> Runtime<E> {
@@ -136,7 +142,6 @@ impl<E: HostEnv> Runtime<E> {
             stack: Stack::new(),
             store,
             env,
-            next: 0,
         }
     }
 
@@ -152,7 +157,7 @@ impl<E: HostEnv> Runtime<E> {
                     func,
                 } => {
                     assert_eq!(functype, FuncType(ResultType(vec![]), ResultType(vec![])));
-                    match self.exec(func.as_ref(), vec![]) {
+                    match self.exec(&func.as_ref().body.0) {
                         Ok(result) => println!("result : {:?}", result),
                         Err(trap) => println!("RuntimeError: {}", trap.message),
                     }
@@ -161,26 +166,29 @@ impl<E: HostEnv> Runtime<E> {
         }
     }
 
-    pub fn exec(&mut self, func: &Func, _args: Vec<Value>) -> Result<Vec<Value>, Trap> {
+    pub fn exec(&mut self, instrs: &Vec<Instr>) -> Result<ExecState, Trap> {
+        let mut next = 0;
         loop {
-            if self.next >= func.body.0.len() {
-                return Ok(vec![]);
+            if next >= instrs.len() {
+                return Ok(ExecState::Return);
             }
-            self.step(func)?;
-            self.next += 1;
+            match self.step(&instrs, next)? {
+                ExecState::Continue => {}
+                ret => return Ok(ret),
+            }
+            next += 1;
         }
     }
 
     pub fn binary_op<F: Fn(T, T) -> T, T: StackValue>(&mut self, func: F) {
-        let lhs = self.stack.pop::<T>();
-        let rhs = self.stack.pop::<T>();
-        self.stack.push(func(lhs, rhs));
+        let lhs = self.stack.pop_value::<T>();
+        let rhs = self.stack.pop_value::<T>();
+        self.stack.push_value(func(lhs, rhs));
     }
 
-    pub fn step(&mut self, func: &Func) -> Result<(), Trap> {
-        let a = &func.body.0[self.next];
-        match &a {
-            Instr::I32Const(a) => self.stack.push(*a),
+    pub fn step(&mut self, instrs: &Vec<Instr>, next: usize) -> Result<ExecState, Trap> {
+        match &instrs[next] {
+            Instr::I32Const(a) => self.stack.push_value(*a),
             Instr::I32Add => self.binary_op(|a: i32, b: i32| a + b),
             Instr::Call(a) => {
                 let func = &self.store.funcs[*a as usize];
@@ -195,6 +203,16 @@ impl<E: HostEnv> Runtime<E> {
                     }
                 }
             }
+            Instr::Block { bt: _, in1 } => {
+                self.stack.push_label(Label { typeidx: 0 });
+                self.exec(in1)?;
+            }
+            Instr::Br(l) => {
+                while self.stack.labels_len() > *l as usize {
+                    self.stack.pop_label();
+                }
+                return Ok(ExecState::Breaking(*l));
+            }
             _ => {
                 return Err(Trap {
                     message: format!("not implemented"),
@@ -202,7 +220,7 @@ impl<E: HostEnv> Runtime<E> {
             }
         }
 
-        Ok(())
+        Ok(ExecState::Continue)
     }
 }
 
@@ -219,7 +237,7 @@ impl HostEnv for DefaultHostEnv {
                 println!("hello {:?}", functype);
             }
             "print" => {
-                println!("{}", stack.pop::<i32>());
+                println!("{}", stack.pop_value::<i32>());
             }
             _ => {
                 panic!("unknown function: {}", name);
@@ -230,11 +248,9 @@ impl HostEnv for DefaultHostEnv {
 
 #[cfg(test)]
 mod tests {
-    use wabt::wat2wasm;
-
-    use crate::loader::parser::Parser;
-
     use super::{DefaultHostEnv, Runtime, HOST_MODULE};
+    use crate::loader::parser::Parser;
+    use wabt::wat2wasm;
 
     #[test]
     fn simple() {
@@ -265,6 +281,31 @@ mod tests {
                    )
                    (start $main)
              )"#,
+            HOST_MODULE
+        ))
+        .unwrap();
+        let mut parser = Parser::new(&wasm);
+        let module = parser.module().unwrap();
+        let mut runtime = Runtime::new(module, DefaultHostEnv {});
+        runtime.start();
+    }
+
+    #[test]
+    fn branch() {
+        let wasm = wat2wasm(format!(
+            r#"(module
+                    (import "{}" "print" (func $print (param i32)))
+                    (func $main
+                         (block 
+                            br 0
+                            i32.const 0
+                            call $print
+                         )
+                         i32.const 10
+                         call $print
+                    )
+                    (start $main)
+                )"#,
             HOST_MODULE
         ))
         .unwrap();
