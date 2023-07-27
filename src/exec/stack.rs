@@ -22,8 +22,7 @@ pub enum Value {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Label {
-    pub next: usize,
-    pub n: usize,
+    pub typeidx: usize,
 }
 
 #[derive(Debug, PartialEq)]
@@ -33,34 +32,83 @@ pub struct Frame {
     pub n: usize,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub struct Stack {
-    bytes: Vec<u8>,
-    entries: Vec<StackEntry>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum StackEntry {
-    Value(ValType),
-    Label,
-    Frame,
+    values: VStack,
+    labels: Vec<Label>,
+    frames: Vec<Frame>,
 }
 
 impl Stack {
     pub fn new() -> Self {
         Self {
-            bytes: vec![],
-            entries: vec![],
+            values: VStack::new(),
+            labels: vec![],
+            frames: vec![],
         }
     }
 
-    pub fn to_usize(&self, start: usize, end: usize) -> usize {
-        let len = self.bytes.len();
-        usize::from_le_bytes((&self.bytes[len - start..len - end]).try_into().unwrap())
+    pub fn values_len(&self) -> usize {
+        self.values.len()
+    }
+
+    pub fn labels_len(&self) -> usize {
+        self.labels.len()
+    }
+
+    pub fn frames_len(&self) -> usize {
+        self.frames.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.values.is_empty() && self.labels.is_empty() && self.frames.is_empty()
+    }
+
+    pub fn push_value<T: StackValue>(&mut self, value: T) {
+        T::push(&mut self.values, value);
+    }
+
+    pub fn pop_value<T: StackValue>(&mut self) -> T {
+        T::pop(&mut self.values)
+    }
+
+    pub fn push_label(&mut self, lable: Label) {
+        self.labels.push(lable);
+    }
+
+    pub fn pop_label(&mut self) -> Label {
+        self.labels.pop().unwrap()
+    }
+
+    pub fn push_frame(&mut self, frame: Frame) {
+        self.frames.push(frame);
+    }
+
+    pub fn pop_frame(&mut self) -> Frame {
+        self.frames.pop().unwrap()
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct VStack {
+    bytes: Vec<u8>,
+    types: Vec<ValType>,
+}
+
+impl VStack {
+    pub fn new() -> Self {
+        Self {
+            bytes: vec![],
+            types: vec![],
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.types.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.types.is_empty()
     }
 
     pub fn push<T: StackValue>(&mut self, value: T) {
@@ -72,7 +120,7 @@ impl Stack {
     }
 
     fn erase_top(&mut self, size: usize) {
-        self.entries.pop();
+        self.types.pop();
         self.bytes.truncate(self.top_addr() - size);
     }
 
@@ -91,9 +139,9 @@ impl Stack {
 }
 
 pub trait StackValue: Sized {
-    fn push(stack: &mut Stack, value: Self);
-    fn top(stack: &Stack) -> Self;
-    fn pop(stack: &mut Stack) -> Self {
+    fn push(stack: &mut VStack, value: Self);
+    fn top(stack: &VStack) -> Self;
+    fn pop(stack: &mut VStack) -> Self {
         let v = Self::top(stack);
         stack.erase_top(size_of::<Self>());
         v
@@ -103,13 +151,13 @@ pub trait StackValue: Sized {
 macro_rules! impl_stack_value {
     ($type:ty, $val_type:expr) => {
         impl StackValue for $type {
-            fn push(stack: &mut Stack, value: Self) {
+            fn push(stack: &mut VStack, value: Self) {
                 stack.bytes.extend(value.to_le_bytes());
-                stack.entries.push(StackEntry::Value($val_type));
+                stack.types.push($val_type);
             }
 
-            fn top(stack: &Stack) -> Self {
-                assert_eq!(stack.entries.last(), Some(&StackEntry::Value($val_type)));
+            fn top(stack: &VStack) -> Self {
+                assert_eq!(stack.types.last(), Some(&$val_type));
                 <$type>::from_le_bytes(stack.top_bytes())
             }
         }
@@ -121,56 +169,25 @@ impl_stack_value!(i64, ValType::I64);
 impl_stack_value!(f32, ValType::F32);
 impl_stack_value!(f64, ValType::F64);
 
-impl StackValue for Label {
-    fn top(stack: &Stack) -> Self {
-        assert_eq!(stack.entries.last(), Some(&StackEntry::Label));
-        Self {
-            next: stack.to_usize(16, 8),
-            n: stack.to_usize(8, 0),
+impl StackValue for Value {
+    fn push(stack: &mut VStack, value: Self) {
+        match value {
+            Value::I32(value) => stack.push(value),
+            Value::I64(value) => stack.push(value),
+            Value::F32(value) => stack.push(value),
+            Value::F64(value) => stack.push(value),
+            _ => todo!(),
         }
     }
 
-    fn push(stack: &mut Stack, value: Self) {
-        stack.bytes.extend(value.next.to_le_bytes());
-        stack.bytes.extend(value.n.to_le_bytes());
-        stack.entries.push(StackEntry::Label);
-    }
-}
-
-impl StackValue for Frame {
-    fn top(stack: &Stack) -> Self {
-        assert_eq!(stack.entries.last(), Some(&StackEntry::Frame));
-        let n = stack.to_usize(8, 0);
-        unsafe {
-            let local = Vec::from_raw_parts(
-                stack.to_usize(32, 24) as *mut _,
-                stack.to_usize(24, 16),
-                stack.to_usize(16, 8),
-            );
-            let instance = Rc::from_raw(stack.to_usize(40, 32) as *const _);
-            Self { instance, local, n }
+    fn top(stack: &VStack) -> Self {
+        match &stack.types.last().unwrap() {
+            ValType::I32 => Value::I32(i32::top(stack)),
+            ValType::I64 => Value::I64(i64::top(stack)),
+            ValType::F32 => Value::F32(f32::top(stack)),
+            ValType::F64 => Value::F64(f64::top(stack)),
+            _ => todo!(),
         }
-    }
-
-    fn push(stack: &mut Stack, value: Self) {
-        // -40 .. -32
-        stack
-            .bytes
-            .extend((Rc::into_raw(value.instance) as usize).to_le_bytes());
-        // -32 .. -24
-        stack
-            .bytes
-            .extend((value.local.as_ptr() as usize).to_le_bytes());
-        // -24 .. -16
-        stack.bytes.extend(value.local.len().to_le_bytes());
-        // -16 .. -8
-        stack.bytes.extend(value.local.capacity().to_le_bytes());
-        // -8 .. 0
-        stack.bytes.extend(value.n.to_le_bytes());
-
-        core::mem::forget(value.local);
-
-        stack.entries.push(StackEntry::Frame);
     }
 }
 
@@ -188,15 +205,15 @@ mod tests {
     #[test]
     fn stack_value() {
         let mut stack = Stack::new();
-        stack.push(-3 as i32);
-        stack.push(i32::MAX as i64 + 10);
-        stack.push(1.32 as f32);
-        stack.push(1.64 as f64);
+        stack.push_value(-3 as i32);
+        stack.push_value(i32::MAX as i64 + 10);
+        stack.push_value(1.32 as f32);
+        stack.push_value(1.64 as f64);
 
-        assert_eq!(stack.pop::<f64>(), 1.64);
-        assert_eq!(stack.pop::<f32>(), 1.32);
-        assert_eq!(stack.pop::<i64>(), i32::MAX as i64 + 10);
-        assert_eq!(stack.pop::<i32>(), -3);
+        assert_eq!(stack.pop_value::<f64>(), 1.64);
+        assert_eq!(stack.pop_value::<f32>(), 1.32);
+        assert_eq!(stack.pop_value::<i64>(), i32::MAX as i64 + 10);
+        assert_eq!(stack.pop_value::<i32>(), -3);
 
         assert!(stack.is_empty())
     }
@@ -205,21 +222,21 @@ mod tests {
     #[should_panic]
     fn stack_value_err() {
         let mut stack = Stack::new();
-        stack.push(3 as i32);
-        stack.push(3 as i32);
+        stack.push_value(3 as i32);
+        stack.push_value(3 as i32);
 
-        assert_eq!(stack.pop::<i64>(), 9);
+        assert_eq!(stack.pop_value::<i64>(), 9);
     }
 
     #[test]
     fn stack_label() {
-        let label1 = Label { next: 4, n: 0 };
-        let label2 = Label { next: 46, n: 1 };
+        let label1 = Label { typeidx: 0 };
+        let label2 = Label { typeidx: 1 };
         let mut stack = Stack::new();
-        stack.push(label1);
-        stack.push(label2);
-        assert_eq!(stack.pop::<Label>(), Label { next: 46, n: 1 });
-        assert_eq!(stack.pop::<Label>(), Label { next: 4, n: 0 });
+        stack.push_label(label1);
+        stack.push_label(label2);
+        assert_eq!(stack.pop_label(), Label { typeidx: 1 });
+        assert_eq!(stack.pop_label(), Label { typeidx: 0 });
 
         assert!(stack.is_empty());
     }
@@ -238,11 +255,11 @@ mod tests {
             n: 0,
         };
         let mut stack = Stack::new();
-        stack.push(frame1);
-        stack.push(frame2);
+        stack.push_frame(frame1);
+        stack.push_frame(frame2);
 
         assert_eq!(
-            stack.pop::<Frame>(),
+            stack.pop_frame(),
             Frame {
                 instance: Rc::new(Instance::default()),
                 local: vec![Value::I32(1), Value::F32(3.0)],
@@ -250,7 +267,7 @@ mod tests {
             }
         );
         assert_eq!(
-            stack.pop::<Frame>(),
+            stack.pop_frame(),
             Frame {
                 instance: Rc::new(Instance::default()),
                 local: vec![],
