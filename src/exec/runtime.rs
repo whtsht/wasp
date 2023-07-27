@@ -1,5 +1,5 @@
 use super::host_env::HostEnv;
-use super::stack::{Stack, StackValue};
+use super::stack::{Frame, Stack, StackValue};
 use super::trap::{Result, Trap};
 use crate::binary::{Export, Func, FuncType, ImportDesc, Instr, Module, ResultType};
 use alloc::rc::Rc;
@@ -66,7 +66,7 @@ pub enum FuncInst {
 
 #[derive(Debug)]
 pub struct Store {
-    funcs: Vec<FuncInst>,
+    funcs: Vec<Rc<FuncInst>>,
 }
 
 pub trait Allocatable {
@@ -75,7 +75,7 @@ pub trait Allocatable {
 
 impl Allocatable for FuncInst {
     fn allocate(store: &mut Store, value: Self) -> Addr {
-        store.funcs.push(value);
+        store.funcs.push(Rc::new(value));
         store.funcs.len() - 1
     }
 }
@@ -86,26 +86,14 @@ impl Store {
     }
 
     pub fn update_func_inst(&mut self, instance: &Rc<Instance>) {
-        self.funcs = self
-            .funcs
-            .drain(..)
-            .map(|f| {
-                if let FuncInst::InnerFunc {
-                    functype,
-                    instance: _,
-                    func,
-                } = f
-                {
-                    FuncInst::InnerFunc {
-                        functype,
-                        instance: instance.clone(),
-                        func,
-                    }
-                } else {
-                    f
+        self.funcs
+            .iter_mut()
+            .for_each(|f| match Rc::get_mut(f).unwrap() {
+                FuncInst::InnerFunc { instance: i, .. } => {
+                    *i = instance.clone();
                 }
-            })
-            .collect();
+                _ => {}
+            });
     }
 
     pub fn allocate<T: Allocatable>(&mut self, value: T) -> Addr {
@@ -143,14 +131,14 @@ impl<E: HostEnv> Runtime<E> {
 
     pub fn start(&mut self) {
         if let Some(index) = self.instance.start {
-            match self.store.funcs[index].clone() {
+            match self.store.funcs[index].clone().as_ref() {
                 FuncInst::HostFunc { name, .. } => self.env.call(&name, &mut self.stack),
                 FuncInst::InnerFunc {
                     functype,
                     instance: _,
                     func,
                 } => {
-                    assert_eq!(functype, FuncType(ResultType(vec![]), ResultType(vec![])));
+                    assert_eq!(functype, &FuncType(ResultType(vec![]), ResultType(vec![])));
                     match self.exec(&func.as_ref().body.0) {
                         Ok(_) => {}
                         Err(trap) => println!("RuntimeError: {}", trap),
@@ -232,13 +220,34 @@ impl<E: HostEnv> Runtime<E> {
             }
             Instr::Return => return Ok(ExecState::Return),
             Instr::Call(a) => {
-                let func = &self.store.funcs[*a as usize];
-                match func {
+                let func = self.store.funcs[*a as usize].clone();
+                match func.as_ref() {
                     FuncInst::HostFunc { name, .. } => {
                         self.env.call(name, &mut self.stack);
                     }
-                    _ => return Err(Trap::NotImplemented),
+                    FuncInst::InnerFunc {
+                        functype,
+                        instance,
+                        func,
+                    } => {
+                        let mut local = vec![];
+                        for _ in 0..functype.0 .0.len() {
+                            local.push(self.stack.pop_value());
+                        }
+                        let frame = Frame {
+                            instance: instance.clone(),
+                            local,
+                            n: 0,
+                        };
+                        self.stack.push_frame(frame);
+                        self.exec(&func.body.0)?;
+                    }
                 }
+            }
+            Instr::LocalGet(l) => {
+                let frame = self.stack.top_frame();
+                let value = frame.local[*l as usize];
+                self.stack.push_value(value);
             }
             _ => return Err(Trap::NotImplemented),
         }
@@ -319,6 +328,34 @@ mod tests {
             HOST_MODULE
         ))
         .unwrap();
+        let mut parser = Parser::new(&wasm);
+        let module = parser.module().unwrap();
+        let mut runtime = Runtime::new(module, DebugHostEnv {});
+        runtime.start();
+    }
+
+    #[test]
+    fn call_func() {
+        let wasm = wat2wasm(format!(
+            r#"(module
+                (import "{}" "print" (func $print (param i32)))
+                (func $add (param i32) (param i32) (result i32)
+                    local.get 0
+                    local.get 1
+                    i32.add
+                )
+                (func $main
+                     i32.const 1
+                     i32.const 2
+                     call $add
+                     call $print
+                )
+                (start $main)
+        )"#,
+            HOST_MODULE
+        ))
+        .unwrap();
+
         let mut parser = Parser::new(&wasm);
         let module = parser.module().unwrap();
         let mut runtime = Runtime::new(module, DebugHostEnv {});

@@ -8,7 +8,7 @@ use core::mem::size_of;
 
 use super::runtime::Instance;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Value {
     I32(i32),
     I64(i64),
@@ -18,6 +18,19 @@ pub enum Value {
     NullRef,
     FuncRef,
     ExternRef,
+}
+
+impl Value {
+    #[inline]
+    pub const fn size(&self) -> usize {
+        match self {
+            Value::I32(_) => 4,
+            Value::I64(_) => 8,
+            Value::F32(_) => 4,
+            Value::F64(_) => 8,
+            _ => todo!(),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -68,24 +81,32 @@ impl Stack {
         T::push(&mut self.values, value);
     }
 
-    pub fn pop_value<T: StackValue>(&mut self) -> T {
-        T::pop(&mut self.values)
-    }
-
     pub fn push_label(&mut self, lable: Label) {
         self.labels.push(lable);
-    }
-
-    pub fn pop_label(&mut self) -> Label {
-        self.labels.pop().unwrap()
     }
 
     pub fn push_frame(&mut self, frame: Frame) {
         self.frames.push(frame);
     }
 
+    pub fn pop_value<T: StackValue>(&mut self) -> T {
+        T::pop(&mut self.values)
+    }
+
+    pub fn pop_label(&mut self) -> Label {
+        self.labels.pop().unwrap()
+    }
+
     pub fn pop_frame(&mut self) -> Frame {
         self.frames.pop().unwrap()
+    }
+
+    pub fn top_frame(&mut self) -> &Frame {
+        self.frames.last().unwrap()
+    }
+
+    pub fn top_frame_mut(&mut self) -> &mut Frame {
+        self.frames.last_mut().unwrap()
     }
 }
 
@@ -141,11 +162,7 @@ impl VStack {
 pub trait StackValue: Sized {
     fn push(stack: &mut VStack, value: Self);
     fn top(stack: &VStack) -> Self;
-    fn pop(stack: &mut VStack) -> Self {
-        let v = Self::top(stack);
-        stack.erase_top(size_of::<Self>());
-        v
-    }
+    fn pop(stack: &mut VStack) -> Self;
 }
 
 macro_rules! impl_stack_value {
@@ -159,6 +176,12 @@ macro_rules! impl_stack_value {
             fn top(stack: &VStack) -> Self {
                 assert_eq!(stack.types.last(), Some(&$val_type));
                 <$type>::from_le_bytes(stack.top_bytes())
+            }
+
+            fn pop(stack: &mut VStack) -> Self {
+                let v = Self::top(stack);
+                stack.erase_top(size_of::<Self>());
+                v
             }
         }
     };
@@ -188,6 +211,12 @@ impl StackValue for Value {
             ValType::F64 => Value::F64(f64::top(stack)),
             _ => todo!(),
         }
+    }
+
+    fn pop(stack: &mut VStack) -> Self {
+        let v = Self::top(stack);
+        stack.erase_top(v.size());
+        v
     }
 }
 
@@ -243,7 +272,6 @@ mod tests {
 
     #[test]
     fn stack_frame() {
-        //let instance = Rc::new(Instance::default());
         let frame1 = Frame {
             instance: Rc::new(Instance::default()),
             local: vec![],
