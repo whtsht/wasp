@@ -14,6 +14,12 @@ impl<'a> Parser<'a> {
         Ok(value)
     }
 
+    pub fn u32_bytes(&mut self) -> Result<(u32, usize), Error> {
+        let (value, bytes) = u32::read_leb128(self.rest())?;
+        self.skip(bytes);
+        Ok((value, bytes))
+    }
+
     pub fn s32(&mut self) -> Result<i32, Error> {
         let (value, bytes) = i32::read_leb128(self.rest())?;
         self.skip(bytes);

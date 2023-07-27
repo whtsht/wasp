@@ -325,13 +325,13 @@ impl<'a> Parser<'a> {
     pub fn custom_section(&mut self) -> Result<CustomSec, Error> {
         self.target(0)
             .ok_or(Error::Expected(format!("section id: 0")))?;
-        let size = self.u32()?;
+        let (size, bytes) = self.u32_bytes()?;
         let name = self.name()?;
         Ok(Section {
             size,
             value: Custom {
                 name: self.name()?,
-                bytes: (&self.rest()[..(size as usize - name.len())]).into(),
+                bytes: (&self.rest()[..(size as usize - name.len() - bytes - 2)]).into(),
             },
         })
     }
@@ -341,7 +341,7 @@ impl<'a> Parser<'a> {
 mod tests {
     use crate::binary::{FuncType, Mut, ResultType, ValType};
     use crate::loader::{parser::Parser, sections::*};
-    use wabt::wat2wasm;
+    use crate::tests::wat2wasm;
 
     #[test]
     fn test_type_section() {

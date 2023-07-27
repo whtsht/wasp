@@ -204,6 +204,7 @@ impl<E: HostEnv> Runtime<E> {
                 }
                 return Ok(ExecState::Breaking(*l));
             }
+
             _ => return Err(Trap::NotImplemented),
         }
 
@@ -237,7 +238,7 @@ impl HostEnv for DefaultHostEnv {
 mod tests {
     use super::{DefaultHostEnv, Runtime, HOST_MODULE};
     use crate::loader::parser::Parser;
-    use wabt::wat2wasm;
+    use crate::tests::wat2wasm;
 
     #[test]
     fn simple() {
@@ -283,9 +284,9 @@ mod tests {
             r#"(module
                     (import "{}" "print" (func $print (param i32)))
                     (func $main
-                         (block 
-                            br 0
+                         (block
                             i32.const 0
+                            br 0
                             call $print
                          )
                          i32.const 10

@@ -320,7 +320,7 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 mod tests {
     use crate::loader::{module::Module, parser::Parser};
-    use wabt::wat2wasm;
+    use crate::tests::wat2wasm;
 
     #[test]
     fn magic() {

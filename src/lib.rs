@@ -32,3 +32,12 @@ pub mod lib {
 pub mod binary;
 pub mod exec;
 pub mod loader;
+
+#[cfg(test)]
+mod tests {
+    use wat::{parse_str, Result};
+
+    pub fn wat2wasm<T: AsRef<str>>(wat: T) -> Result<Vec<u8>> {
+        parse_str(wat.as_ref())
+    }
+}
