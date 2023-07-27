@@ -1,4 +1,4 @@
-use super::stack::{Label, Stack, StackValue};
+use super::stack::{Stack, StackValue};
 use super::trap::{Result, Trap};
 use crate::binary::{Export, Func, FuncType, ImportDesc, Instr, Module, ResultType};
 use alloc::rc::Rc;
@@ -185,6 +185,53 @@ impl<E: HostEnv> Runtime<E> {
         match &instrs[next] {
             Instr::I32Const(a) => self.stack.push_value(*a),
             Instr::I32Add => self.binary_op(|a: i32, b: i32| a + b),
+            Instr::Nop => {}
+            Instr::Unreachable => return Err(Trap::Unreachable),
+            Instr::Block { in1, .. } => match self.exec(in1)? {
+                ExecState::Breaking(l) if l > 0 => return Ok(ExecState::Breaking(l - 1)),
+                _ => {}
+            },
+            Instr::Loop { in1, .. } => loop {
+                match self.exec(in1)? {
+                    ExecState::Breaking(l) if l > 0 => return Ok(ExecState::Breaking(l - 1)),
+                    ExecState::Return => return Ok(ExecState::Return),
+                    _ => {}
+                }
+            },
+            Instr::If { in1, in2, .. } => {
+                let c = self.stack.pop_value::<i32>();
+                if c != 0 {
+                    match self.exec(in1)? {
+                        ExecState::Breaking(l) if l > 0 => return Ok(ExecState::Breaking(l - 1)),
+                        ExecState::Return => return Ok(ExecState::Return),
+                        _ => {}
+                    }
+                } else if let Some(in2) = in2 {
+                    match self.exec(in2)? {
+                        ExecState::Breaking(l) if l > 0 => return Ok(ExecState::Breaking(l - 1)),
+                        ExecState::Return => return Ok(ExecState::Return),
+                        _ => {}
+                    }
+                }
+            }
+            Instr::Br(l) => {
+                return Ok(ExecState::Breaking(*l));
+            }
+            Instr::BrIf(l) => {
+                let c = self.stack.pop_value::<i32>();
+                if c != 0 {
+                    return Ok(ExecState::Breaking(*l));
+                }
+            }
+            Instr::BrTable { indexs, default } => {
+                let i = self.stack.pop_value::<i32>() as usize;
+                return if i <= indexs.len() {
+                    Ok(ExecState::Breaking(indexs[i]))
+                } else {
+                    Ok(ExecState::Breaking(*default))
+                };
+            }
+            Instr::Return => return Ok(ExecState::Return),
             Instr::Call(a) => {
                 let func = &self.store.funcs[*a as usize];
                 match func {
@@ -194,20 +241,8 @@ impl<E: HostEnv> Runtime<E> {
                     _ => return Err(Trap::NotImplemented),
                 }
             }
-            Instr::Block { bt: _, in1 } => {
-                self.stack.push_label(Label { typeidx: 0 });
-                self.exec(in1)?;
-            }
-            Instr::Br(l) => {
-                while self.stack.labels_len() > *l as usize {
-                    self.stack.pop_label();
-                }
-                return Ok(ExecState::Breaking(*l));
-            }
-
             _ => return Err(Trap::NotImplemented),
         }
-
         Ok(ExecState::Continue)
     }
 }
@@ -288,12 +323,14 @@ mod tests {
                             i32.const 0
                             (block (result i32 i32)
                                 i32.const 1
-                                i32.const 10
                                 (block (param i32) (result i32)
                                     i32.const 2
                                     i32.add
-                                    br 0
+                                    i32.const 5
+                                    i32.const 6
+                                    br 2
                                 )
+                                i32.const 10
                             )
                          )
                          call $print
