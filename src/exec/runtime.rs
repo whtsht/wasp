@@ -1,3 +1,4 @@
+use super::host_env::HostEnv;
 use super::stack::{Stack, StackValue};
 use super::trap::{Result, Trap};
 use crate::binary::{Export, Func, FuncType, ImportDesc, Instr, Module, ResultType};
@@ -143,9 +144,7 @@ impl<E: HostEnv> Runtime<E> {
     pub fn start(&mut self) {
         if let Some(index) = self.instance.start {
             match self.store.funcs[index].clone() {
-                FuncInst::HostFunc { functype, name } => {
-                    self.env.call(&name, &functype, &mut self.stack)
-                }
+                FuncInst::HostFunc { name, .. } => self.env.call(&name, &mut self.stack),
                 FuncInst::InnerFunc {
                     functype,
                     instance: _,
@@ -235,8 +234,8 @@ impl<E: HostEnv> Runtime<E> {
             Instr::Call(a) => {
                 let func = &self.store.funcs[*a as usize];
                 match func {
-                    FuncInst::HostFunc { functype, name } => {
-                        self.env.call(name, functype, &mut self.stack);
+                    FuncInst::HostFunc { name, .. } => {
+                        self.env.call(name, &mut self.stack);
                     }
                     _ => return Err(Trap::NotImplemented),
                 }
@@ -247,31 +246,9 @@ impl<E: HostEnv> Runtime<E> {
     }
 }
 
-pub trait HostEnv {
-    fn call(&mut self, name: &str, functype: &FuncType, stack: &mut Stack);
-}
-
-pub struct DefaultHostEnv {}
-
-impl HostEnv for DefaultHostEnv {
-    fn call(&mut self, name: &str, functype: &FuncType, stack: &mut Stack) {
-        match name {
-            "start" => {
-                println!("hello {:?}", functype);
-            }
-            "print" => {
-                println!("{}", stack.pop_value::<i32>());
-            }
-            _ => {
-                panic!("unknown function: {}", name);
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{DefaultHostEnv, Runtime, HOST_MODULE};
+    use super::{super::host_env::DebugHostEnv, Runtime, HOST_MODULE};
     use crate::loader::parser::Parser;
     use crate::tests::wat2wasm;
 
@@ -287,7 +264,7 @@ mod tests {
         .unwrap();
         let mut parser = Parser::new(&wasm);
         let module = parser.module().unwrap();
-        let mut runtime = Runtime::new(module, DefaultHostEnv {});
+        let mut runtime = Runtime::new(module, DebugHostEnv {});
         runtime.start();
     }
 
@@ -309,7 +286,7 @@ mod tests {
         .unwrap();
         let mut parser = Parser::new(&wasm);
         let module = parser.module().unwrap();
-        let mut runtime = Runtime::new(module, DefaultHostEnv {});
+        let mut runtime = Runtime::new(module, DebugHostEnv {});
         runtime.start();
     }
 
@@ -344,7 +321,7 @@ mod tests {
         .unwrap();
         let mut parser = Parser::new(&wasm);
         let module = parser.module().unwrap();
-        let mut runtime = Runtime::new(module, DefaultHostEnv {});
+        let mut runtime = Runtime::new(module, DebugHostEnv {});
         runtime.start();
     }
 }
