@@ -1,7 +1,7 @@
-use alloc::rc::Rc;
-
 use super::stack::{Label, Stack, StackValue};
+use super::trap::{Result, Trap};
 use crate::binary::{Export, Func, FuncType, ImportDesc, Instr, Module, ResultType};
+use alloc::rc::Rc;
 
 pub type Addr = usize;
 
@@ -61,11 +61,6 @@ pub enum FuncInst {
         functype: FuncType,
         name: String,
     },
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct Trap {
-    message: String,
 }
 
 #[derive(Debug)]
@@ -158,15 +153,15 @@ impl<E: HostEnv> Runtime<E> {
                 } => {
                     assert_eq!(functype, FuncType(ResultType(vec![]), ResultType(vec![])));
                     match self.exec(&func.as_ref().body.0) {
-                        Ok(result) => println!("result : {:?}", result),
-                        Err(trap) => println!("RuntimeError: {}", trap.message),
+                        Ok(_) => {}
+                        Err(trap) => println!("RuntimeError: {}", trap),
                     }
                 }
             }
         }
     }
 
-    pub fn exec(&mut self, instrs: &Vec<Instr>) -> Result<ExecState, Trap> {
+    pub fn exec(&mut self, instrs: &Vec<Instr>) -> Result<ExecState> {
         let mut next = 0;
         loop {
             if next >= instrs.len() {
@@ -186,7 +181,7 @@ impl<E: HostEnv> Runtime<E> {
         self.stack.push_value(func(lhs, rhs));
     }
 
-    pub fn step(&mut self, instrs: &Vec<Instr>, next: usize) -> Result<ExecState, Trap> {
+    pub fn step(&mut self, instrs: &Vec<Instr>, next: usize) -> Result<ExecState> {
         match &instrs[next] {
             Instr::I32Const(a) => self.stack.push_value(*a),
             Instr::I32Add => self.binary_op(|a: i32, b: i32| a + b),
@@ -196,11 +191,7 @@ impl<E: HostEnv> Runtime<E> {
                     FuncInst::HostFunc { functype, name } => {
                         self.env.call(name, functype, &mut self.stack);
                     }
-                    _ => {
-                        return Err(Trap {
-                            message: format!("not implemented"),
-                        })
-                    }
+                    _ => return Err(Trap::NotImplemented),
                 }
             }
             Instr::Block { bt: _, in1 } => {
@@ -213,11 +204,7 @@ impl<E: HostEnv> Runtime<E> {
                 }
                 return Ok(ExecState::Breaking(*l));
             }
-            _ => {
-                return Err(Trap {
-                    message: format!("not implemented"),
-                })
-            }
+            _ => return Err(Trap::NotImplemented),
         }
 
         Ok(ExecState::Continue)
