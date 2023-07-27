@@ -323,7 +323,7 @@ mod tests {
     use wabt::wat2wasm;
 
     #[test]
-    fn test_magic() {
+    fn magic() {
         let mut parser = Parser::new(b"\0asm");
         assert_eq!(parser.magic(), Ok(()));
 
@@ -332,7 +332,7 @@ mod tests {
     }
 
     #[test]
-    fn test_version() {
+    fn version() {
         let mut parser = Parser::new(&[
             0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00, 0x73, 0x6D, 0x61, 0x99,
         ]);
@@ -346,14 +346,14 @@ mod tests {
     }
 
     #[test]
-    fn test_integer_ok() {
+    fn integer_ok() {
         let mut parser = Parser::new(&[0xc0, 0xbb, 0x78, 0x12, 0x34, 0xff]);
         assert_eq!(parser.s32(), Ok(-123456));
         assert_eq!(parser.rest().len(), 3);
     }
 
     #[test]
-    fn test_module() {
+    fn module() {
         let wasm = wat2wasm(
             r#"
             (module
@@ -393,7 +393,41 @@ mod tests {
     }
 
     #[test]
-    fn test_do_not_anything() {
+    fn branch() {
+        let wasm = wat2wasm(
+            r#"
+            (module
+                   (import "env" "print" (func $print (param i32)))
+                   (func $main
+                        i32.const 0
+                        (if
+                            (then
+                                i32.const 1
+                                call $print
+                            )
+                            (else
+                                i32.const 0
+                                call $print
+                            )
+                        )
+                   )
+                   (start $main)
+            )"#,
+        )
+        .unwrap();
+        let mut parser = Parser::new(&wasm);
+        assert!(matches!(
+            parser.module(),
+            Ok(Module {
+                version: 1,
+                start: Some(1),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn do_not_anything() {
         let wasm = wat2wasm(r#"(module (func) (start 0))"#).unwrap();
         let mut parser = Parser::new(&wasm);
         assert!(matches!(

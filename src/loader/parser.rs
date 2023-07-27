@@ -115,12 +115,16 @@ impl<'a> Parser<'a> {
         A: FnMut(&mut Self) -> Result<T, Error>,
         B: FnMut(&mut Self) -> Result<T, Error>,
     {
+        let cursor = self.cursor;
         match a(self) {
             Ok(ok) => Ok(ok),
-            Err(err1) => match b(self) {
-                Ok(ok) => Ok(ok),
-                Err(err2) => Err(Error::Or(Box::new(err1), Box::new(err2))),
-            },
+            Err(err1) => {
+                self.cursor = cursor;
+                match b(self) {
+                    Ok(ok) => Ok(ok),
+                    Err(err2) => Err(Error::Or(Box::new(err1), Box::new(err2))),
+                }
+            }
         }
     }
 

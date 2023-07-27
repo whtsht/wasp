@@ -6,8 +6,14 @@ use crate::lib::*;
 impl<'a> Parser<'a> {
     pub fn blocktype(&mut self) -> Result<Block, Error> {
         match self.peek() {
-            Some(0x40) => Ok(Block::Empty),
-            Some(t) if self.is_valtype(t) => Ok(Block::ValType(ValType::from_byte(t).unwrap())),
+            Some(0x40) => {
+                self.next();
+                Ok(Block::Empty)
+            }
+            Some(t) if self.is_valtype(t) => {
+                self.next();
+                Ok(Block::ValType(ValType::from_byte(t).unwrap()))
+            }
             // TODO
             // It is treated as a 33 bit signed integer.
             Some(_) => Ok(Block::TypeIdx(self.s32()? as u32)),
@@ -293,7 +299,34 @@ impl<'a> Parser<'a> {
                 Ok(17) => Ok(Instr::TableFill(self.tableidx()?)),
                 _ => unreachable!(),
             },
-            _ => todo!(),
+            v => panic!("not implemented{:?}", v),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        binary::{Block, Expr, Instr},
+        loader::parser::Parser,
+    };
+
+    #[test]
+    fn branch() {
+        let mut parasr = Parser::new(&[
+            0x41, 0x0, 0x4, 0x40, 0x41, 0x1, 0x10, 0x0, 0x5, 0x41, 0x0, 0x10, 0x0, 0xb, 0xb,
+        ]);
+
+        assert_eq!(
+            parasr.expr(),
+            Ok(Expr(vec![
+                Instr::I32Const(0),
+                Instr::If {
+                    bt: Block::Empty,
+                    in1: vec![Instr::I32Const(1), Instr::Call(0)],
+                    in2: Some(vec![Instr::I32Const(0), Instr::Call(0)])
+                }
+            ]))
+        );
     }
 }
