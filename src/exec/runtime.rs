@@ -1,72 +1,225 @@
-use crate::binary::Module;
+use alloc::rc::Rc;
 
-use super::stack::Stack;
+use super::stack::{Stack, StackValue, Value};
+use crate::binary::{Export, Func, FuncType, ImportDesc, Instr, Module, ResultType};
 
-const HOST_MODULE: &str = "env";
+pub type Addr = usize;
 
+pub const HOST_MODULE: &str = "__env";
+
+#[derive(Debug, PartialEq, Clone, Default)]
 pub struct Instance {
-    funcs: Vec<FuncInst>,
+    funcaddrs: Vec<Addr>,
     start: Option<usize>,
+    exports: Vec<Export>,
 }
 
 impl Instance {
-    pub fn new(module: Module) -> Self {
+    pub fn new(module: Module, store: &mut Store) -> Self {
         let mut funcs = vec![];
+
         for import in module.imports.into_iter() {
-            match import.module.as_str() {
-                HOST_MODULE => funcs.push(FuncInst::HostFunc { name: import.name }),
+            match import.desc {
+                ImportDesc::TypeIdx(idx) => match import.module.as_str() {
+                    HOST_MODULE => {
+                        let addr = store.allocate(FuncInst::HostFunc {
+                            functype: module.types[idx as usize].clone(),
+                            name: import.name,
+                        });
+                        funcs.push(addr);
+                    }
+                    _ => {}
+                },
                 _ => {}
             }
         }
 
+        for func in module.funcs {
+            funcs.push(store.allocate(FuncInst::InnerFunc {
+                functype: module.types[func.typeidx as usize].clone(),
+                instance: Rc::new(Instance::default()),
+                func: Rc::new(func),
+            }))
+        }
+
         Self {
-            funcs,
+            funcaddrs: funcs,
             start: module.start.map(|idx| idx as usize),
+            exports: module.exports,
         }
     }
 }
 
+#[derive(Debug, PartialEq, Clone)]
 pub enum FuncInst {
-    InnerFunc {},
-    HostFunc { name: String },
+    InnerFunc {
+        functype: FuncType,
+        instance: Rc<Instance>,
+        func: Rc<Func>,
+    },
+    HostFunc {
+        functype: FuncType,
+        name: String,
+    },
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct Trap {
+    message: String,
+}
+
+#[derive(Debug)]
+pub struct Store {
+    funcs: Vec<FuncInst>,
+}
+
+pub trait Allocatable {
+    fn allocate(store: &mut Store, value: Self) -> Addr;
+}
+
+impl Allocatable for FuncInst {
+    fn allocate(store: &mut Store, value: Self) -> Addr {
+        store.funcs.push(value);
+        store.funcs.len() - 1
+    }
+}
+
+impl Store {
+    pub fn new() -> Self {
+        Self { funcs: vec![] }
+    }
+
+    pub fn update_func_inst(&mut self, instance: &Rc<Instance>) {
+        self.funcs = self
+            .funcs
+            .drain(..)
+            .map(|f| {
+                if let FuncInst::InnerFunc {
+                    functype,
+                    instance: _,
+                    func,
+                } = f
+                {
+                    FuncInst::InnerFunc {
+                        functype,
+                        instance: instance.clone(),
+                        func,
+                    }
+                } else {
+                    f
+                }
+            })
+            .collect();
+    }
+
+    pub fn allocate<T: Allocatable>(&mut self, value: T) -> Addr {
+        Allocatable::allocate(self, value)
+    }
+}
+
+#[derive(Debug)]
 pub struct Runtime<E: HostEnv> {
-    instance: Instance,
-    _stack: Stack,
+    instance: Rc<Instance>,
+    store: Store,
+    stack: Stack,
     env: E,
+    next: usize,
 }
 
 impl<E: HostEnv> Runtime<E> {
     pub fn new(module: Module, env: E) -> Self {
-        let instance = Instance::new(module);
+        let mut store = Store::new();
+        let instance = Rc::new(Instance::new(module, &mut store));
+        store.update_func_inst(&instance);
         Self {
             instance,
-            _stack: Stack::new(),
+            stack: Stack::new(),
+            store,
             env,
+            next: 0,
         }
     }
+
     pub fn start(&mut self) {
         if let Some(index) = self.instance.start {
-            match &self.instance.funcs[index] {
-                FuncInst::HostFunc { name } => self.env.call(name),
-                _ => todo!(),
+            match self.store.funcs[index].clone() {
+                FuncInst::HostFunc { functype, name } => {
+                    self.env.call(&name, &functype, &mut self.stack)
+                }
+                FuncInst::InnerFunc {
+                    functype,
+                    instance: _,
+                    func,
+                } => {
+                    assert_eq!(functype, FuncType(ResultType(vec![]), ResultType(vec![])));
+                    match self.exec(func.as_ref(), vec![]) {
+                        Ok(result) => println!("result : {:?}", result),
+                        Err(trap) => println!("RuntimeError: {}", trap.message),
+                    }
+                }
             }
         }
+    }
+
+    pub fn exec(&mut self, func: &Func, _args: Vec<Value>) -> Result<Vec<Value>, Trap> {
+        loop {
+            if self.next >= func.body.0.len() {
+                return Ok(vec![]);
+            }
+            self.step(func)?;
+            self.next += 1;
+        }
+    }
+
+    pub fn binary_op<F: Fn(T, T) -> T, T: StackValue>(&mut self, func: F) {
+        let lhs = self.stack.pop::<T>();
+        let rhs = self.stack.pop::<T>();
+        self.stack.push(func(lhs, rhs));
+    }
+
+    pub fn step(&mut self, func: &Func) -> Result<(), Trap> {
+        let a = &func.body.0[self.next];
+        match &a {
+            Instr::I32Const(a) => self.stack.push(*a),
+            Instr::I32Add => self.binary_op(|a: i32, b: i32| a + b),
+            Instr::Call(a) => {
+                let func = &self.store.funcs[*a as usize];
+                match func {
+                    FuncInst::HostFunc { functype, name } => {
+                        self.env.call(name, functype, &mut self.stack);
+                    }
+                    _ => {
+                        return Err(Trap {
+                            message: format!("not implemented"),
+                        })
+                    }
+                }
+            }
+            _ => {
+                return Err(Trap {
+                    message: format!("not implemented"),
+                })
+            }
+        }
+
+        Ok(())
     }
 }
 
 pub trait HostEnv {
-    fn call(&mut self, name: &str);
+    fn call(&mut self, name: &str, functype: &FuncType, stack: &mut Stack);
 }
 
 pub struct DefaultHostEnv {}
 
 impl HostEnv for DefaultHostEnv {
-    fn call(&mut self, name: &str) {
+    fn call(&mut self, name: &str, functype: &FuncType, stack: &mut Stack) {
         match name {
             "start" => {
-                println!("hello");
+                println!("hello {:?}", functype);
+            }
+            "print" => {
+                println!("{}", stack.pop::<i32>());
             }
             _ => {
                 panic!("unknown function: {}", name);
@@ -81,16 +234,39 @@ mod tests {
 
     use crate::loader::parser::Parser;
 
-    use super::{DefaultHostEnv, Runtime};
+    use super::{DefaultHostEnv, Runtime, HOST_MODULE};
 
     #[test]
-    fn test_simple() {
-        let wasm = wat2wasm(
+    fn simple() {
+        let wasm = wat2wasm(format!(
             r#"(module
-                   (import "env" "start" (func $start))
+                   (import "{}" "start" (func $start))
                    (start $start)
                )"#,
-        )
+            HOST_MODULE
+        ))
+        .unwrap();
+        let mut parser = Parser::new(&wasm);
+        let module = parser.module().unwrap();
+        let mut runtime = Runtime::new(module, DefaultHostEnv {});
+        runtime.start();
+    }
+
+    #[test]
+    fn instr() {
+        let wasm = wat2wasm(format!(
+            r#"(module
+                   (import "{}" "print" (func $print (param i32)))
+                   (func $main
+                       i32.const 10
+                       i32.const 20
+                       i32.add
+                       call $print
+                   )
+                   (start $main)
+             )"#,
+            HOST_MODULE
+        ))
         .unwrap();
         let mut parser = Parser::new(&wasm);
         let module = parser.module().unwrap();
