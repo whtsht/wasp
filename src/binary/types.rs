@@ -49,10 +49,10 @@ impl FromByte for ValType {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct FuncType(pub ResultType, pub ResultType);
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ResultType(pub Vec<ValType>);
 
 #[derive(Debug, PartialEq, Eq)]

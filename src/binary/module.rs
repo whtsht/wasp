@@ -39,7 +39,7 @@ pub struct Import {
     pub desc: ImportDesc,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Export {
     pub name: String,
     pub desc: ExportDesc,
@@ -67,7 +67,7 @@ pub enum ImportDesc {
     GlobalType(GlobalType),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ExportDesc {
     Func(FuncIdx),
     Table(TableIdx),
