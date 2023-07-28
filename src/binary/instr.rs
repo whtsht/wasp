@@ -5,20 +5,20 @@ use super::{
 #[cfg(not(feature = "std"))]
 use crate::lib::*;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Block {
     Empty,
     ValType(ValType),
     TypeIdx(u32),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct MemArg {
     pub align: u32,
     pub offset: u32,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Expr(pub Vec<Instr>);
 
 impl Expr {
@@ -27,7 +27,7 @@ impl Expr {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Instr {
     // Control Instruction
     Unreachable,

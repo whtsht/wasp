@@ -19,20 +19,20 @@ pub type DataIdx = u32;
 pub type LocalIdx = u32;
 pub type LabelIdx = u32;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Func {
     pub typeidx: TypeIdx,
     pub locals: Vec<ValType>,
     pub body: Expr,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Global {
     pub type_: GlobalType,
     pub value: Expr,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Import {
     pub module: String,
     pub name: String,
@@ -45,21 +45,21 @@ pub struct Export {
     pub desc: ExportDesc,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Elem {
     pub type_: RefType,
     pub init: Vec<Expr>,
     pub mode: ElemMode,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum ElemMode {
     Passiv,
     Active { table: TableIdx, offset: Expr },
     Declarative,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ImportDesc {
     TypeIdx(u32),
     TableType(Table),
@@ -93,34 +93,34 @@ pub struct Func0 {
     pub body: Expr,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Data {
     pub init: Vec<u8>,
     pub mode: DataMode,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum DataMode {
     Passive,
     Active { memory: MemIdx, offset: Expr },
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Table {
     pub reftype: RefType,
     pub limits: Limits,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Memory(pub Limits);
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Custom {
     pub name: String,
     pub bytes: Vec<u8>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Section<T> {
     pub size: u32,
     pub value: T,
@@ -179,7 +179,7 @@ pub struct CustomSecList {
     pub sec13: Vec<Custom>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Module {
     pub version: u8,
     pub types: Vec<FuncType>,

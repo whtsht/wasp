@@ -12,5 +12,3 @@ impl core::fmt::Display for Trap {
         }
     }
 }
-
-pub type Result<T> = core::result::Result<T, Trap>;

@@ -4,6 +4,7 @@ pub trait HostEnv {
     fn call(&mut self, name: &str, stack: &mut Stack);
 }
 
+#[derive(Debug)]
 pub struct DebugHostEnv {}
 
 impl HostEnv for DebugHostEnv {

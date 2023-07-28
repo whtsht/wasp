@@ -55,19 +55,19 @@ pub struct FuncType(pub ResultType, pub ResultType);
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ResultType(pub Vec<ValType>);
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Limits {
     Min(u32),
     MinMax(u32, u32),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Mut {
     Const,
     Var,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct GlobalType {
     pub valtype: ValType,
     pub mut_: Mut,

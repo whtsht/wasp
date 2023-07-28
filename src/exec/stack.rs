@@ -39,13 +39,13 @@ pub struct Label {
     pub offset: usize,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Frame {
     pub instance: Rc<Instance>,
     pub local: Vec<Value>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Default, Clone)]
 pub struct Stack {
     values: Vec<Value>,
     labels: Vec<Label>,
