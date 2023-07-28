@@ -20,7 +20,7 @@ impl FromByte for RefType {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ValType {
     I32,
     I64,
