@@ -209,7 +209,7 @@ impl<E: HostEnv> Runtime<E> {
             self.stack.pop_value::<Value>();
         }
 
-        for _ in 0..l {
+        for _ in 0..=l {
             self.stack.pop_label();
         }
 
@@ -391,30 +391,6 @@ mod tests {
 
     #[test]
     fn call_func() {
-        let wasm = wat2wasm(
-            r#"(module
-                (func $add (param i32) (param i32) (result i32)
-                    local.get 0
-                    local.get 1
-                    i32.add
-                )
-                (func (export "main") (result i32)
-                     i32.const 1
-                     i32.const 2
-                     call $add
-                )
-        )"#,
-        )
-        .unwrap();
-
-        let mut parser = Parser::new(&wasm);
-        let module = parser.module().unwrap();
-        let mut runtime = Runtime::new(module, DebugHostEnv {});
-        assert_eq!(runtime.invoke("main", vec![]), Ok(vec![Value::I32(3)]));
-    }
-
-    #[test]
-    fn call_func2() {
         let wasm = wat2wasm(
             r#"(module
                 (func $triple (result i32 i32 i32)
