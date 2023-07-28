@@ -1,7 +1,6 @@
 #[cfg(not(feature = "std"))]
 use crate::lib::*;
 
-use crate::binary::ValType;
 use alloc::rc::Rc;
 
 use super::runtime::Instance;
@@ -36,7 +35,7 @@ impl Into<Value> for i32 {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Label {
-    pub types: Vec<ValType>,
+    pub n: usize,
     pub offset: usize,
 }
 
@@ -44,7 +43,6 @@ pub struct Label {
 pub struct Frame {
     pub instance: Rc<Instance>,
     pub local: Vec<Value>,
-    pub n: usize,
 }
 
 #[derive(Debug, PartialEq)]
@@ -103,6 +101,14 @@ impl Stack {
         self.frames.pop().unwrap()
     }
 
+    pub fn set_params(&mut self, params: Vec<Value>) {
+        self.values = params;
+    }
+
+    pub fn get_returns(&mut self) -> Vec<Value> {
+        self.values.drain(..).collect()
+    }
+
     pub fn th_label(&self, th: usize) -> Label {
         self.labels[self.labels.len() - 1 - th].clone()
     }
@@ -129,31 +135,13 @@ mod tests {
 
     #[test]
     fn stack_label() {
-        let label1 = Label {
-            types: vec![],
-            offset: 0,
-        };
-        let label2 = Label {
-            types: vec![],
-            offset: 1,
-        };
+        let label1 = Label { n: 0, offset: 0 };
+        let label2 = Label { n: 0, offset: 1 };
         let mut stack = Stack::new();
         stack.push_label(label1);
         stack.push_label(label2);
-        assert_eq!(
-            stack.pop_label(),
-            Label {
-                types: vec![],
-                offset: 1
-            }
-        );
-        assert_eq!(
-            stack.pop_label(),
-            Label {
-                types: vec![],
-                offset: 0
-            }
-        );
+        assert_eq!(stack.pop_label(), Label { n: 0, offset: 1 });
+        assert_eq!(stack.pop_label(), Label { n: 0, offset: 0 });
 
         assert!(stack.is_empty());
     }
@@ -163,12 +151,10 @@ mod tests {
         let frame1 = Frame {
             instance: Rc::new(Instance::default()),
             local: vec![],
-            n: 1,
         };
         let frame2 = Frame {
             instance: Rc::new(Instance::default()),
             local: vec![Value::I32(1), Value::F32(3.0)],
-            n: 0,
         };
         let mut stack = Stack::new();
         stack.push_frame(frame1);
@@ -179,7 +165,6 @@ mod tests {
             Frame {
                 instance: Rc::new(Instance::default()),
                 local: vec![Value::I32(1), Value::F32(3.0)],
-                n: 0,
             }
         );
         assert_eq!(
@@ -187,7 +172,6 @@ mod tests {
             Frame {
                 instance: Rc::new(Instance::default()),
                 local: vec![],
-                n: 1,
             }
         );
         assert!(stack.is_empty());

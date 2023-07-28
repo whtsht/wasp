@@ -1,7 +1,7 @@
 use super::host_env::HostEnv;
 use super::stack::{Frame, Label, Stack, Value};
 use super::trap::{Result, Trap};
-use crate::binary::{Block, Export, ValType};
+use crate::binary::{Block, Export};
 use crate::binary::{ExportDesc, Func, FuncType, ImportDesc, Instr, Module};
 use alloc::rc::Rc;
 
@@ -153,20 +153,14 @@ impl<E: HostEnv> Runtime<E> {
             .next()
         {
             if let ExportDesc::Func(index) = export.desc {
-                for param in params {
-                    self.stack.push_value(param);
-                }
+                self.stack.set_params(params);
                 match self.store.funcs[index as usize].clone().as_ref() {
                     FuncInst::HostFunc { name, .. } => self.env.call(&name, &mut self.stack),
                     FuncInst::InnerFunc { func, .. } => {
                         self.exec(&func.as_ref().body.0)?;
                     }
                 }
-                let mut result = vec![];
-                while self.stack.values_len() > 0 {
-                    result.push(self.stack.pop_value());
-                }
-                Ok(result)
+                Ok(self.stack.get_returns())
             } else {
                 panic!("Error: {} is not a function", name);
             }
@@ -195,18 +189,18 @@ impl<E: HostEnv> Runtime<E> {
         self.stack.push_value(func(lhs, rhs));
     }
 
-    pub fn block_to_valtype(&self, bt: &Block) -> Vec<ValType> {
+    pub fn block_to_arity(&self, bt: &Block) -> usize {
         match bt {
-            Block::Empty => vec![],
-            Block::ValType(valtype) => vec![*valtype],
-            Block::TypeIdx(idx) => self.instance.types[*idx as usize].1 .0.clone(),
+            Block::Empty => 0,
+            Block::ValType(_) => 1,
+            Block::TypeIdx(idx) => self.instance.types[*idx as usize].1 .0.len(),
         }
     }
 
     pub fn jump(&mut self, l: usize) {
         let label = self.stack.th_label(l);
         let mut values: Vec<Value> = vec![];
-        for _ in 0..label.types.len() {
+        for _ in 0..label.n {
             values.push(self.stack.pop_value());
         }
 
@@ -232,7 +226,7 @@ impl<E: HostEnv> Runtime<E> {
             Instr::Unreachable => return Err(Trap::Unreachable),
             Instr::Block { in1, bt } => {
                 self.stack.push_label(Label {
-                    types: self.block_to_valtype(bt),
+                    n: self.block_to_arity(bt),
                     offset: self.stack.values_len(),
                 });
                 match self.exec(in1)? {
@@ -305,7 +299,6 @@ impl<E: HostEnv> Runtime<E> {
                         let frame = Frame {
                             instance: instance.clone(),
                             local,
-                            n: 0,
                         };
                         self.stack.push_frame(frame);
                         self.exec(&func.body.0)?;
@@ -392,7 +385,7 @@ mod tests {
         let mut runtime = Runtime::new(module, DebugHostEnv {});
         assert_eq!(
             runtime.invoke("main", vec![]),
-            Ok(vec![Value::I32(6), Value::I32(5), Value::I32(3)])
+            Ok(vec![Value::I32(3), Value::I32(5), Value::I32(6)])
         );
     }
 
@@ -418,5 +411,60 @@ mod tests {
         let module = parser.module().unwrap();
         let mut runtime = Runtime::new(module, DebugHostEnv {});
         assert_eq!(runtime.invoke("main", vec![]), Ok(vec![Value::I32(3)]));
+    }
+
+    #[test]
+    fn call_func2() {
+        let wasm = wat2wasm(
+            r#"(module
+                (func $triple (result i32 i32 i32)
+                    (block (result i32 i32 i32)
+                        i32.const 0
+                        (block (result i32 i32)
+                            i32.const 1
+                            (block (param i32) (result i32)
+                                i32.const 2
+                                i32.add
+                                i32.const 5
+                                i32.const 6
+                                br 2
+                            )
+                            i32.const 10
+                        )
+                    )
+                )
+                (func (export "main") (result i32 i32 i32 i32 i32 i32)
+                     (block (result i32 i32 i32)
+                        i32.const 0
+                        (block (result i32 i32)
+                            i32.const 1
+                            (block (param i32) (result i32)
+                                call $triple
+                                i32.add
+                                br 2
+                            )
+                            i32.const 10
+                        )
+                    )
+                    call $triple
+                )
+        )"#,
+        )
+        .unwrap();
+
+        let mut parser = Parser::new(&wasm);
+        let module = parser.module().unwrap();
+        let mut runtime = Runtime::new(module, DebugHostEnv {});
+        assert_eq!(
+            runtime.invoke("main", vec![]),
+            Ok(vec![
+                Value::I32(1),
+                Value::I32(3),
+                Value::I32(11),
+                Value::I32(3),
+                Value::I32(5),
+                Value::I32(6)
+            ])
+        );
     }
 }
