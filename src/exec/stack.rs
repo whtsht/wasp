@@ -1,9 +1,7 @@
 #[cfg(not(feature = "std"))]
 use crate::lib::*;
 
-use alloc::rc::Rc;
-
-use super::runtime::Instance;
+use super::runtime::Addr;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Value {
@@ -41,7 +39,7 @@ pub struct Label {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Frame {
-    pub instance: Rc<Instance>,
+    pub instance_addr: Addr,
     pub local: Vec<Value>,
 }
 
@@ -124,12 +122,7 @@ impl Stack {
 
 #[cfg(test)]
 mod tests {
-    use alloc::rc::Rc;
-
-    use crate::exec::{
-        runtime::Instance,
-        stack::{Frame, Label, Value},
-    };
+    use crate::exec::stack::{Frame, Label, Value};
 
     use super::Stack;
 
@@ -149,11 +142,11 @@ mod tests {
     #[test]
     fn stack_frame() {
         let frame1 = Frame {
-            instance: Rc::new(Instance::default()),
+            instance_addr: 0,
             local: vec![],
         };
         let frame2 = Frame {
-            instance: Rc::new(Instance::default()),
+            instance_addr: 0,
             local: vec![Value::I32(1), Value::F32(3.0)],
         };
         let mut stack = Stack::new();
@@ -163,14 +156,14 @@ mod tests {
         assert_eq!(
             stack.pop_frame(),
             Frame {
-                instance: Rc::new(Instance::default()),
+                instance_addr: 0,
                 local: vec![Value::I32(1), Value::F32(3.0)],
             }
         );
         assert_eq!(
             stack.pop_frame(),
             Frame {
-                instance: Rc::new(Instance::default()),
+                instance_addr: 0,
                 local: vec![],
             }
         );
