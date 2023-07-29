@@ -1,14 +1,13 @@
-use crate::binary::Expr;
-use crate::binary::GlobalType;
 #[cfg(not(feature = "std"))]
 use crate::lib::*;
 
-use super::host_env::DebugHostEnv;
-use super::host_env::HostEnv;
+use super::env::{DebugEnv, Env};
 use super::importer::DefaultImporter;
 use super::importer::Importer;
 use super::stack::{Frame, Label, Stack, Value};
 use super::trap::Trap;
+use crate::binary::Expr;
+use crate::binary::GlobalType;
 use crate::binary::{Block, Export};
 use crate::binary::{ExportDesc, Func, FuncType, ImportDesc, Instr, Module};
 
@@ -142,7 +141,7 @@ impl Store {
 
 use core::fmt::Debug;
 #[derive(Debug)]
-pub struct Runtime<E: HostEnv + Debug, I: Importer + Debug> {
+pub struct Runtime<E: Env + Debug, I: Importer + Debug> {
     root: usize,
     instances: Vec<Instance>,
     store: Store,
@@ -158,15 +157,13 @@ pub enum RuntimeError {
 }
 
 #[cfg(feature = "std")]
-pub fn debug_runtime(
-    module: Module,
-) -> Result<Runtime<DebugHostEnv, DefaultImporter>, RuntimeError> {
+pub fn debug_runtime(module: Module) -> Result<Runtime<DebugEnv, DefaultImporter>, RuntimeError> {
     let mut runtime = Runtime {
         root: 0,
         instances: vec![],
         store: Store::new(),
         importer: DefaultImporter::new(),
-        env: DebugHostEnv {},
+        env: DebugEnv {},
     };
 
     let instance = runtime.new_instance(module)?;
@@ -185,7 +182,7 @@ pub fn eval_const(expr: Expr) -> Result<Value, RuntimeError> {
     })
 }
 
-impl<E: HostEnv + Debug, I: Importer + Debug> Runtime<E, I> {
+impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
     pub fn new(importer: I, env: E, module: Module) -> Result<Self, RuntimeError> {
         let mut runtime = Runtime {
             root: 0,
@@ -344,7 +341,7 @@ impl<E: HostEnv + Debug, I: Importer + Debug> Runtime<E, I> {
     }
 }
 
-pub fn exec<E: HostEnv + Debug>(
+pub fn exec<E: Env + Debug>(
     env: &mut E,
     instances: &mut Vec<Instance>,
     store: &mut Store,
@@ -364,7 +361,7 @@ pub fn exec<E: HostEnv + Debug>(
     }
 }
 
-pub fn step<E: HostEnv + Debug>(
+pub fn step<E: Env + Debug>(
     env: &mut E,
     instances: &mut Vec<Instance>,
     instr: &Instr,
@@ -490,7 +487,7 @@ pub fn step<E: HostEnv + Debug>(
 #[cfg(test)]
 mod tests {
     use super::{Runtime, HOST_MODULE};
-    use crate::exec::host_env::DebugHostEnv;
+    use crate::exec::env::DebugEnv;
     use crate::exec::importer::DefaultImporter;
     use crate::exec::runtime::debug_runtime;
     use crate::exec::stack::Value;
@@ -654,7 +651,7 @@ mod tests {
         let mut importer = DefaultImporter::new();
         importer.add_module(math, "math");
 
-        let mut runtime = Runtime::new(importer, DebugHostEnv {}, main).unwrap();
+        let mut runtime = Runtime::new(importer, DebugEnv {}, main).unwrap();
 
         assert_eq!(runtime.invoke("main", vec![]), Ok(vec![Value::I32(6)]));
     }
@@ -700,7 +697,7 @@ mod tests {
         let mut importer = DefaultImporter::new();
         importer.add_module(inc, "inc");
 
-        let mut runtime = Runtime::new(importer, DebugHostEnv {}, main).unwrap();
+        let mut runtime = Runtime::new(importer, DebugEnv {}, main).unwrap();
         assert_eq!(
             runtime.invoke("main", vec![]),
             Ok(vec![

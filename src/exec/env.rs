@@ -1,13 +1,13 @@
 use super::stack::Stack;
 
-pub trait HostEnv {
+pub trait Env {
     fn call(&mut self, name: &str, stack: &mut Stack);
 }
 
 #[derive(Debug)]
-pub struct DebugHostEnv {}
+pub struct DebugEnv {}
 
-impl HostEnv for DebugHostEnv {
+impl Env for DebugEnv {
     fn call(&mut self, name: &str, stack: &mut Stack) {
         match name {
             "start" => {
