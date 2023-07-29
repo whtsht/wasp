@@ -149,9 +149,11 @@ pub struct Runtime<E: Env + Debug, I: Importer + Debug> {
     env: E,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum RuntimeError {
-    ModuleNotFound,
+    ModuleNotFound(String),
+    FunctionNotFound(String),
+    NotFunction(String, ExportDesc),
     ConstantExpression,
     Trap(Trap),
 }
@@ -256,7 +258,7 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
         let module = self
             .importer
             .import(modname)
-            .ok_or_else(|| RuntimeError::ModuleNotFound)?;
+            .ok_or_else(|| RuntimeError::ModuleNotFound(modname.into()))?;
         let instance = self.new_instance(module)?;
         if let Some(desc) = instance
             .exports
@@ -270,14 +272,14 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
                 self.instances.push(instance);
                 return ret;
             } else {
-                panic!("expected function, found {:?}", desc);
+                Err(RuntimeError::NotFunction(funcname.into(), desc.clone()))
             }
         } else {
-            panic!("a function named {}.{} was not found", modname, funcname)
+            Err(RuntimeError::FunctionNotFound(funcname.into()))
         }
     }
 
-    pub fn start(&mut self) {
+    pub fn start(&mut self) -> Result<(), RuntimeError> {
         if let Some(index) = self.instances[self.root].start {
             match self.store.funcs[index].clone() {
                 FuncInst::HostFunc { name, .. } => {
@@ -289,54 +291,56 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
                         local: vec![],
                     };
 
-                    match exec(
+                    exec(
                         &mut self.env,
                         &mut self.instances,
                         &mut self.store,
                         &func.body.0,
                         &mut frame,
-                    ) {
-                        Ok(_) => {}
-                        Err(trap) => println!("RuntimeError: {}", trap),
-                    }
+                    )
+                    .map_err(|trap| RuntimeError::Trap(trap))?;
                 }
             }
         }
+        Ok(())
     }
 
-    pub fn invoke(&mut self, name: &str, params: Vec<Value>) -> Result<Vec<Value>, Trap> {
+    pub fn invoke(&mut self, name: &str, params: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
         if let Some(export) = self.instances[self.root]
             .exports
             .iter()
             .filter(|export| &export.name == name)
             .next()
         {
-            if let ExportDesc::Func(index) = export.desc {
-                match self.store.funcs[self.instances[self.root].funcaddrs[index as usize]].clone()
-                {
-                    FuncInst::HostFunc { name, .. } => {
-                        self.env.call(&name, &mut self.instances[self.root].stack)
+            match export.desc {
+                ExportDesc::Func(index) => {
+                    match self.store.funcs[self.instances[self.root].funcaddrs[index as usize]]
+                        .clone()
+                    {
+                        FuncInst::HostFunc { name, .. } => {
+                            self.env.call(&name, &mut self.instances[self.root].stack)
+                        }
+                        FuncInst::InnerFunc { func, .. } => {
+                            let mut frame = Frame {
+                                instance_addr: self.root,
+                                local: params,
+                            };
+                            exec(
+                                &mut self.env,
+                                &mut self.instances,
+                                &mut self.store,
+                                &func.body.0,
+                                &mut frame,
+                            )
+                            .map_err(|trap| RuntimeError::Trap(trap))?;
+                        }
                     }
-                    FuncInst::InnerFunc { func, .. } => {
-                        let mut frame = Frame {
-                            instance_addr: self.root,
-                            local: params,
-                        };
-                        exec(
-                            &mut self.env,
-                            &mut self.instances,
-                            &mut self.store,
-                            &func.body.0,
-                            &mut frame,
-                        )?;
-                    }
+                    Ok(self.instances[self.root].stack.get_returns())
                 }
-                Ok(self.instances[self.root].stack.get_returns())
-            } else {
-                panic!("Error: {} is not a function", name);
+                _ => Err(RuntimeError::NotFunction(name.into(), export.desc.clone())),
             }
         } else {
-            panic!("Error: A function named {} was not found", name);
+            Err(RuntimeError::FunctionNotFound(name.into()))
         }
     }
 }
@@ -507,7 +511,7 @@ mod tests {
         let mut parser = Parser::new(&wasm);
         let module = parser.module().unwrap();
         let mut runtime = debug_runtime(module).unwrap();
-        runtime.start();
+        runtime.start().unwrap();
     }
 
     #[test]
