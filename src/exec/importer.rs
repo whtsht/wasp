@@ -11,6 +11,7 @@ pub struct DefaultImporter {
     modules: BTreeMap<String, Module>,
 }
 
+#[cfg(feature = "std")]
 impl DefaultImporter {
     pub fn new() -> Self {
         Self {

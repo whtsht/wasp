@@ -1,8 +1,7 @@
 #[cfg(not(feature = "std"))]
 use crate::lib::*;
 
-use super::env::{DebugEnv, Env};
-use super::importer::DefaultImporter;
+use super::env::Env;
 use super::importer::Importer;
 use super::stack::{Frame, Label, Stack, Value};
 use super::trap::Trap;
@@ -157,6 +156,11 @@ pub enum RuntimeError {
     ConstantExpression,
     Trap(Trap),
 }
+
+#[cfg(feature = "std")]
+use super::env::DebugEnv;
+#[cfg(feature = "std")]
+use super::importer::DefaultImporter;
 
 #[cfg(feature = "std")]
 pub fn debug_runtime(module: Module) -> Result<Runtime<DebugEnv, DefaultImporter>, RuntimeError> {

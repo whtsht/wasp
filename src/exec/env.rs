@@ -5,8 +5,10 @@ pub trait Env {
 }
 
 #[derive(Debug)]
+#[cfg(feature = "std")]
 pub struct DebugEnv {}
 
+#[cfg(feature = "std")]
 impl Env for DebugEnv {
     fn call(&mut self, name: &str, stack: &mut Stack) {
         match name {
