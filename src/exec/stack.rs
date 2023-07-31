@@ -39,6 +39,7 @@ pub struct Label {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Frame {
+    pub n: usize,
     pub instance_addr: Addr,
     pub local: Vec<Value>,
 }
@@ -142,10 +143,12 @@ mod tests {
     #[test]
     fn stack_frame() {
         let frame1 = Frame {
+            n: 0,
             instance_addr: 0,
             local: vec![],
         };
         let frame2 = Frame {
+            n: 0,
             instance_addr: 0,
             local: vec![Value::I32(1), Value::F32(3.0)],
         };
@@ -156,6 +159,7 @@ mod tests {
         assert_eq!(
             stack.pop_frame(),
             Frame {
+                n: 0,
                 instance_addr: 0,
                 local: vec![Value::I32(1), Value::F32(3.0)],
             }
@@ -163,6 +167,7 @@ mod tests {
         assert_eq!(
             stack.pop_frame(),
             Frame {
+                n: 0,
                 instance_addr: 0,
                 local: vec![],
             }

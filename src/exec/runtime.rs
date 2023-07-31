@@ -298,6 +298,7 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
                 }
                 FuncInst::InnerFunc { func, .. } => {
                     let mut frame = Frame {
+                        n: 0,
                         instance_addr: self.root,
                         local: vec![],
                     };
@@ -331,8 +332,9 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
                         FuncInst::HostFunc { name, .. } => {
                             self.env.call(&name, &mut self.instances[self.root].stack)
                         }
-                        FuncInst::InnerFunc { func, .. } => {
+                        FuncInst::InnerFunc { func, functype, .. } => {
                             let mut frame = Frame {
+                                n: functype.1 .0.len(),
                                 instance_addr: self.root,
                                 local: params,
                             };
@@ -451,7 +453,18 @@ pub fn step<E: Env + Debug>(
                 Ok(ExecState::Breaking(*default))
             };
         }
-        Instr::Return => return Ok(ExecState::Return),
+        Instr::Return => {
+            let n = frame.n;
+            let mut results: Vec<Value> = vec![];
+            for _ in 0..n {
+                results.push(instance.stack.pop_value());
+            }
+
+            for _ in 0..n {
+                instance.stack.push_value(results.pop().unwrap());
+            }
+            return Ok(ExecState::Return);
+        }
         Instr::Call(a) => {
             let func = store.funcs[*a as usize].clone();
             match func {
@@ -468,6 +481,7 @@ pub fn step<E: Env + Debug>(
                         local.push(instance.stack.pop_value());
                     }
                     let mut new_frame = Frame {
+                        n: functype.1 .0.len(),
                         instance_addr,
                         local,
                     };
