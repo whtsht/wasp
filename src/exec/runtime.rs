@@ -403,6 +403,9 @@ pub fn step<E: Env + Debug>(
     let instance = &mut instances[frame.instance_addr];
     match instr {
         Instr::I32Const(a) => instance.stack.push_value(*a),
+        Instr::I64Const(a) => instance.stack.push_value(*a),
+        Instr::F32Const(a) => instance.stack.push_value(*a),
+        Instr::F64Const(a) => instance.stack.push_value(*a),
         Instr::I32Add => instance.binary_op(|a: i32, b: i32| a.wrapping_add(b)),
         Instr::I32Sub => instance.binary_op(|a: i32, b: i32| a.wrapping_sub(b)),
         Instr::I32Mul => instance.binary_op(|a: i32, b: i32| a.wrapping_mul(b)),

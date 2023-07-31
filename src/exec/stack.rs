@@ -31,6 +31,54 @@ impl Into<Value> for i32 {
     }
 }
 
+impl From<Value> for i64 {
+    fn from(value: Value) -> Self {
+        if let Value::I64(value) = value {
+            value
+        } else {
+            unreachable!()
+        }
+    }
+}
+
+impl From<Value> for f32 {
+    fn from(value: Value) -> Self {
+        if let Value::F32(value) = value {
+            value
+        } else {
+            unreachable!()
+        }
+    }
+}
+
+impl Into<Value> for f32 {
+    fn into(self) -> Value {
+        Value::F32(self)
+    }
+}
+
+impl From<Value> for f64 {
+    fn from(value: Value) -> Self {
+        if let Value::F64(value) = value {
+            value
+        } else {
+            unreachable!()
+        }
+    }
+}
+
+impl Into<Value> for f64 {
+    fn into(self) -> Value {
+        Value::F64(self)
+    }
+}
+
+impl Into<Value> for i64 {
+    fn into(self) -> Value {
+        Value::I64(self)
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Label {
     pub n: usize,

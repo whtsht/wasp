@@ -1,4 +1,5 @@
 use crate::binary::Module;
+#[cfg(feature = "std")]
 use alloc::collections::BTreeMap;
 
 pub trait Importer {
