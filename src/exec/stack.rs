@@ -36,8 +36,14 @@ impl From<Value> for i64 {
         if let Value::I64(value) = value {
             value
         } else {
-            unreachable!()
+            unreachable!("{:?}", value)
         }
+    }
+}
+
+impl Into<Value> for i64 {
+    fn into(self) -> Value {
+        Value::I64(self)
     }
 }
 
@@ -70,12 +76,6 @@ impl From<Value> for f64 {
 impl Into<Value> for f64 {
     fn into(self) -> Value {
         Value::F64(self)
-    }
-}
-
-impl Into<Value> for i64 {
-    fn into(self) -> Value {
-        Value::I64(self)
     }
 }
 

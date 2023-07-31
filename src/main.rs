@@ -16,7 +16,7 @@ fn main() {
             .expect("failed to parse module");
 
         let mut runtime = debug_runtime(module).expect("failed to load module");
-        match runtime.invoke("_start", vec![Value::I32(0)]) {
+        match runtime.invoke("_start", vec![Value::I64(5)]) {
             Ok(_) => {}
             Err(err) => println!("{:?}", err),
         }

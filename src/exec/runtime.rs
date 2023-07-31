@@ -30,10 +30,11 @@ pub struct Instance {
 }
 
 impl Instance {
-    pub fn binary_op<F: Fn(T, T) -> T, T: From<Value> + Into<Value>>(&mut self, func: F) {
-        let lhs = self.stack.pop_value::<T>();
+    pub fn binary_op<F: Fn(T, T) -> T, T: From<Value> + Into<Value> + Debug>(&mut self, func: F) {
         let rhs = self.stack.pop_value::<T>();
-        self.stack.push_value(func(lhs, rhs));
+        let lhs = self.stack.pop_value::<T>();
+        let r = func(lhs, rhs);
+        self.stack.push_value(r);
     }
 
     pub fn block_to_arity(&self, bt: &Block) -> usize {
@@ -407,9 +408,13 @@ pub fn step<E: Env + Debug>(
         Instr::F32Const(a) => instance.stack.push_value(*a),
         Instr::F64Const(a) => instance.stack.push_value(*a),
         Instr::I32Add => instance.binary_op(|a: i32, b: i32| a.wrapping_add(b)),
+        Instr::I64Add => instance.binary_op(|a: i64, b: i64| a.wrapping_add(b)),
         Instr::I32Sub => instance.binary_op(|a: i32, b: i32| a.wrapping_sub(b)),
+        Instr::I64Sub => instance.binary_op(|a: i64, b: i64| a.wrapping_sub(b)),
         Instr::I32Mul => instance.binary_op(|a: i32, b: i32| a.wrapping_mul(b)),
+        Instr::I64Mul => instance.binary_op(|a: i64, b: i64| a.wrapping_mul(b)),
         Instr::I32DivU => instance.binary_op(|a: i32, b: i32| a / b),
+        Instr::I64RemS => instance.binary_op(|a: i64, b: i64| a.wrapping_rem(b)),
         Instr::Nop => {}
         Instr::Drop => {
             instance.stack.pop_value::<Value>();
@@ -425,7 +430,12 @@ pub fn step<E: Env + Debug>(
                 _ => {}
             }
         }
-        Instr::Loop { in1, .. } => loop {
+        Instr::Loop { in1, bt } => loop {
+            let n = instances[frame.instance_addr].block_to_arity(bt);
+            let offset = instances[frame.instance_addr].stack.values_len();
+            instances[frame.instance_addr]
+                .stack
+                .push_label(Label { n, offset });
             match exec(env, instances, store, in1, frame)? {
                 ExecState::Breaking(l) if l > 0 => return Ok(ExecState::Breaking(l - 1)),
                 ExecState::Return => return Ok(ExecState::Return),
