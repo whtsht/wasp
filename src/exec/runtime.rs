@@ -12,8 +12,6 @@ use crate::binary::{ExportDesc, Func, FuncType, ImportDesc, Instr, Module};
 
 pub type Addr = usize;
 
-pub const HOST_MODULE: &str = "__env";
-
 #[derive(Debug)]
 pub enum ExecState {
     Breaking(u32),
@@ -141,6 +139,7 @@ impl Store {
 use core::fmt::Debug;
 #[derive(Debug)]
 pub struct Runtime<E: Env + Debug, I: Importer + Debug> {
+    env_name: String,
     root: usize,
     instances: Vec<Instance>,
     store: Store,
@@ -166,6 +165,7 @@ use super::importer::DefaultImporter;
 pub fn debug_runtime(module: Module) -> Result<Runtime<DebugEnv, DefaultImporter>, RuntimeError> {
     let mut runtime = Runtime {
         root: 0,
+        env_name: "env".into(),
         instances: vec![],
         store: Store::new(),
         importer: DefaultImporter::new(),
@@ -189,13 +189,19 @@ pub fn eval_const(expr: Expr) -> Result<Value, RuntimeError> {
 }
 
 impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
-    pub fn new(importer: I, env: E, module: Module) -> Result<Self, RuntimeError> {
+    pub fn new<S: Into<String>>(
+        importer: I,
+        env: E,
+        env_name: S,
+        module: Module,
+    ) -> Result<Self, RuntimeError> {
         let mut runtime = Runtime {
             root: 0,
             instances: vec![],
             store: Store::new(),
             importer,
             env,
+            env_name: env_name.into(),
         };
 
         let instance = runtime.new_instance(module)?;
@@ -212,16 +218,17 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
 
         for import in module.imports {
             match import.desc {
-                ImportDesc::TypeIdx(idx) => match import.module.as_str() {
-                    HOST_MODULE => {
+                ImportDesc::TypeIdx(idx) => {
+                    if import.module == self.env_name {
                         let addr = self.store.allocate(FuncInst::HostFunc {
                             functype: module.types[idx as usize].clone(),
                             name: import.name,
                         });
                         funcaddrs.push(addr);
+                    } else {
+                        funcaddrs.push(self.get_func_addr(&import.module, &import.name)?);
                     }
-                    modname => funcaddrs.push(self.get_func_addr(modname, &import.name)?),
-                },
+                }
                 _ => {}
             }
         }
@@ -494,7 +501,7 @@ pub fn step<E: Env + Debug>(
 
 #[cfg(test)]
 mod tests {
-    use super::{Runtime, HOST_MODULE};
+    use super::Runtime;
     use crate::exec::env::DebugEnv;
     use crate::exec::importer::DefaultImporter;
     use crate::exec::runtime::debug_runtime;
@@ -504,13 +511,12 @@ mod tests {
 
     #[test]
     fn simple() {
-        let wasm = wat2wasm(format!(
+        let wasm = wat2wasm(
             r#"(module
-                       (import "{}" "start" (func $start))
+                       (import "env" "start" (func $start))
                        (start $start)
                    )"#,
-            HOST_MODULE
-        ))
+        )
         .unwrap();
         let mut parser = Parser::new(&wasm);
         let module = parser.module().unwrap();
@@ -659,7 +665,7 @@ mod tests {
         let mut importer = DefaultImporter::new();
         importer.add_module(math, "math");
 
-        let mut runtime = Runtime::new(importer, DebugEnv {}, main).unwrap();
+        let mut runtime = Runtime::new(importer, DebugEnv {}, "env", main).unwrap();
 
         assert_eq!(runtime.invoke("main", vec![]), Ok(vec![Value::I32(6)]));
     }
@@ -705,7 +711,7 @@ mod tests {
         let mut importer = DefaultImporter::new();
         importer.add_module(inc, "inc");
 
-        let mut runtime = Runtime::new(importer, DebugEnv {}, main).unwrap();
+        let mut runtime = Runtime::new(importer, DebugEnv {}, "env", main).unwrap();
         assert_eq!(
             runtime.invoke("main", vec![]),
             Ok(vec![
