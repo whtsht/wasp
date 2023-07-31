@@ -386,8 +386,14 @@ pub fn step<E: Env + Debug>(
     let instance = &mut instances[frame.instance_addr];
     match instr {
         Instr::I32Const(a) => instance.stack.push_value(*a),
-        Instr::I32Add => instance.binary_op(|a: i32, b: i32| a + b),
+        Instr::I32Add => instance.binary_op(|a: i32, b: i32| a.wrapping_add(b)),
+        Instr::I32Sub => instance.binary_op(|a: i32, b: i32| a.wrapping_sub(b)),
+        Instr::I32Mul => instance.binary_op(|a: i32, b: i32| a.wrapping_mul(b)),
+        Instr::I32DivU => instance.binary_op(|a: i32, b: i32| a / b),
         Instr::Nop => {}
+        Instr::Drop => {
+            instance.stack.pop_value::<Value>();
+        }
         Instr::Unreachable => return Err(Trap::Unreachable),
         Instr::Block { in1, bt } => {
             instance.stack.push_label(Label {
@@ -485,6 +491,15 @@ pub fn step<E: Env + Debug>(
             let value = frame.local[*l as usize];
             instance.stack.push_value(value);
         }
+        Instr::LocalSet(l) => {
+            let value = instance.stack.pop_value();
+            frame.local[*l as usize] = value;
+        }
+        Instr::LocalTee(l) => {
+            let value: Value = instance.stack.pop_value();
+            instance.stack.push_value(value);
+            frame.local[*l as usize] = value;
+        }
         Instr::GlobalGet(i) => {
             let globalindex = instance.globaladdrs[*i as usize];
             instance.stack.push_value(store.globals[globalindex].value);
@@ -494,7 +509,7 @@ pub fn step<E: Env + Debug>(
             let globalindex = instance.globaladdrs[*i as usize];
             store.globals[globalindex].value = value;
         }
-        _ => return Err(Trap::NotImplemented),
+        i => return Err(Trap::NotImplemented(format!("{:?}", i))),
     }
     Ok(ExecState::Continue)
 }
