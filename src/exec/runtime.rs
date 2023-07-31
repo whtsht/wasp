@@ -1,7 +1,7 @@
 #[cfg(not(feature = "std"))]
 use crate::lib::*;
 
-use super::env::Env;
+use super::env::{Env, EnvError};
 use super::importer::Importer;
 use super::stack::{Frame, Label, Stack, Value};
 use super::trap::Trap;
@@ -152,6 +152,7 @@ pub enum RuntimeError {
     ModuleNotFound(String),
     FunctionNotFound(String),
     NotFunction(String, ExportDesc),
+    Env(EnvError),
     ConstantExpression,
     Trap(Trap),
 }
@@ -294,7 +295,14 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
         if let Some(index) = self.instances[self.root].start {
             match self.store.funcs[index].clone() {
                 FuncInst::HostFunc { name, .. } => {
-                    self.env.call(&name, &mut self.instances[self.root].stack)
+                    let frame = Frame {
+                        n: 0,
+                        instance_addr: self.root,
+                        local: vec![],
+                    };
+                    self.env
+                        .call(&name, frame)
+                        .map_err(|err| RuntimeError::Env(err))?;
                 }
                 FuncInst::InnerFunc { func, .. } => {
                     let mut frame = Frame {
@@ -330,7 +338,14 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
                         .clone()
                     {
                         FuncInst::HostFunc { name, .. } => {
-                            self.env.call(&name, &mut self.instances[self.root].stack)
+                            let frame = Frame {
+                                n: 0,
+                                instance_addr: self.root,
+                                local: vec![],
+                            };
+                            self.env
+                                .call(&name, frame)
+                                .map_err(|err| RuntimeError::Env(err))?;
                         }
                         FuncInst::InnerFunc { func, functype, .. } => {
                             let mut frame = Frame {
@@ -468,8 +483,23 @@ pub fn step<E: Env + Debug>(
         Instr::Call(a) => {
             let func = store.funcs[*a as usize].clone();
             match func {
-                FuncInst::HostFunc { name, .. } => {
-                    env.call(name.as_str(), &mut instance.stack);
+                FuncInst::HostFunc { name, functype } => {
+                    let mut local = vec![];
+                    for _ in 0..functype.0 .0.len() {
+                        local.push(instance.stack.pop_value());
+                    }
+                    let new_frame = Frame {
+                        n: functype.1 .0.len(),
+                        instance_addr: frame.instance_addr,
+                        local,
+                    };
+                    let results = env
+                        .call(name.as_str(), new_frame)
+                        .map_err(|err| Trap::Env(err))?;
+
+                    for result in results {
+                        instance.stack.push_value(result);
+                    }
                 }
                 FuncInst::InnerFunc {
                     functype,
@@ -741,6 +771,39 @@ mod tests {
         importer.add_module(inc, "inc");
 
         let mut runtime = Runtime::new(importer, DebugEnv {}, "env", main).unwrap();
+        assert_eq!(
+            runtime.invoke("main", vec![]),
+            Ok(vec![
+                Value::I32(1),
+                Value::I32(2),
+                Value::I32(3),
+                Value::I32(4),
+                Value::I32(5)
+            ])
+        );
+    }
+
+    #[test]
+    fn host_function() {
+        let main = Parser::new(
+            &wat2wasm(
+                r#"(module
+                        (import "inc" "inc" (func $inc (result i32)))
+                        (func (export "main") (result i32 i32 i32 i32 i32)
+                             call $inc
+                             call $inc
+                             call $inc
+                             call $inc
+                             call $inc
+                        )
+                    )"#,
+            )
+            .unwrap(),
+        )
+        .module()
+        .unwrap();
+
+        let mut runtime = Runtime::new(DefaultImporter::new(), DebugEnv {}, "env", main).unwrap();
         assert_eq!(
             runtime.invoke("main", vec![]),
             Ok(vec![

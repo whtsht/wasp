@@ -1,7 +1,15 @@
-use super::stack::Stack;
+#[cfg(not(feature = "std"))]
+use crate::lib::*;
+
+use super::stack::{Frame, Value};
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum EnvError {
+    NotFound,
+}
 
 pub trait Env {
-    fn call(&mut self, name: &str, stack: &mut Stack);
+    fn call(&mut self, name: &str, frame: Frame) -> Result<Vec<Value>, EnvError>;
 }
 
 #[derive(Debug)]
@@ -10,17 +18,16 @@ pub struct DebugEnv {}
 
 #[cfg(feature = "std")]
 impl Env for DebugEnv {
-    fn call(&mut self, name: &str, stack: &mut Stack) {
+    fn call(&mut self, name: &str, frame: Frame) -> Result<Vec<Value>, EnvError> {
         match name {
             "start" => {
                 println!("hello world");
             }
             "print" => {
-                println!("{}", stack.pop_value::<i32>());
+                println!("{:?}", frame.local[0]);
             }
-            _ => {
-                panic!("unknown function: {}", name);
-            }
+            _ => return Err(EnvError::NotFound),
         }
+        Ok(vec![])
     }
 }
