@@ -5,18 +5,55 @@ use super::env::{Env, EnvError};
 use super::importer::Importer;
 use super::stack::{Frame, Label, Stack, Value};
 use super::trap::Trap;
-use crate::binary::Expr;
-use crate::binary::GlobalType;
 use crate::binary::{Block, Export};
-use crate::binary::{ExportDesc, Func, FuncType, ImportDesc, Instr, Module};
+use crate::binary::{ExportDesc, FuncType, ImportDesc, Instr, Module};
+use crate::binary::{Expr, ValType};
+use crate::binary::{Global, GlobalType};
 
 pub type Addr = usize;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ExecState {
-    Breaking(u32),
     Continue,
-    Return,
+    Terminate,
+}
+
+impl Stack {
+    pub fn binary_op<F: Fn(T, T) -> T, T: From<Value> + Into<Value>>(&mut self, func: F) {
+        let rhs = self.pop_value::<T>();
+        let lhs = self.pop_value::<T>();
+        let r = func(lhs, rhs);
+        self.push_value(r);
+    }
+
+    pub fn rel_op<F: Fn(T, T) -> T, T: From<Value> + Into<Value>>(&mut self, func: F) {
+        let rhs = self.pop_value::<T>();
+        let lhs = self.pop_value::<T>();
+        let r = func(lhs, rhs);
+        self.push_value(r);
+    }
+
+    pub fn jump(&mut self, l: usize) -> usize {
+        let label = self.th_label(l);
+        let mut values: Vec<Value> = vec![];
+        for _ in 0..label.n {
+            values.push(self.pop_value());
+        }
+
+        let len = self.values_len() - label.offset;
+        for _ in 0..len {
+            self.pop_value::<Value>();
+        }
+
+        for _ in 0..=l {
+            self.pop_label();
+        }
+
+        for value in values.into_iter().rev() {
+            self.push_value(value);
+        }
+        label.pc
+    }
 }
 
 #[derive(Debug, PartialEq, Default, Clone)]
@@ -26,17 +63,9 @@ pub struct Instance {
     types: Vec<FuncType>,
     start: Option<usize>,
     exports: Vec<Export>,
-    stack: Stack,
 }
 
 impl Instance {
-    pub fn binary_op<F: Fn(T, T) -> T, T: From<Value> + Into<Value> + Debug>(&mut self, func: F) {
-        let rhs = self.stack.pop_value::<T>();
-        let lhs = self.stack.pop_value::<T>();
-        let r = func(lhs, rhs);
-        self.stack.push_value(r);
-    }
-
     pub fn block_to_arity(&self, bt: &Block) -> usize {
         match bt {
             Block::Empty => 0,
@@ -44,35 +73,15 @@ impl Instance {
             Block::TypeIdx(idx) => self.types[*idx as usize].1 .0.len(),
         }
     }
-
-    pub fn jump(&mut self, l: usize) {
-        let label = self.stack.th_label(l);
-        let mut values: Vec<Value> = vec![];
-        for _ in 0..label.n {
-            values.push(self.stack.pop_value());
-        }
-
-        let len = self.stack.values_len() - label.offset;
-        for _ in 0..len {
-            self.stack.pop_value::<Value>();
-        }
-
-        for _ in 0..=l {
-            self.stack.pop_label();
-        }
-
-        for value in values.into_iter().rev() {
-            self.stack.push_value(value);
-        }
-    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum FuncInst {
     InnerFunc {
-        functype: FuncType,
         instance_addr: Addr,
-        func: Func,
+        start: usize,
+        functype: FuncType,
+        locals: Vec<ValType>,
     },
     HostFunc {
         functype: FuncType,
@@ -90,24 +99,6 @@ pub struct GlobalInst {
 pub struct Store {
     funcs: Vec<FuncInst>,
     globals: Vec<GlobalInst>,
-}
-
-pub trait Allocatable {
-    fn allocate(store: &mut Store, value: Self) -> Addr;
-}
-
-impl Allocatable for FuncInst {
-    fn allocate(store: &mut Store, value: Self) -> Addr {
-        store.funcs.push(value);
-        store.funcs.len() - 1
-    }
-}
-
-impl Allocatable for GlobalInst {
-    fn allocate(store: &mut Store, value: Self) -> Addr {
-        store.globals.push(value);
-        store.globals.len() - 1
-    }
 }
 
 impl Store {
@@ -132,8 +123,17 @@ impl Store {
         }
     }
 
-    pub fn allocate<T: Allocatable>(&mut self, value: T) -> Addr {
-        Allocatable::allocate(self, value)
+    pub fn allocate_env_func(&mut self, functype: FuncType, name: String) -> Addr {
+        self.funcs.push(FuncInst::HostFunc { functype, name });
+        self.funcs.len() - 1
+    }
+
+    pub fn allocate_global(&mut self, global: Global) -> Result<Addr, RuntimeError> {
+        self.globals.push(GlobalInst {
+            globaltype: global.type_,
+            value: eval_const(global.value)?,
+        });
+        Ok(self.globals.len() - 1)
     }
 }
 
@@ -141,11 +141,14 @@ use core::fmt::Debug;
 #[derive(Debug)]
 pub struct Runtime<E: Env + Debug, I: Importer + Debug> {
     env_name: String,
+    instrs: Vec<Instr>,
     root: usize,
     instances: Vec<Instance>,
     store: Store,
+    stack: Stack,
     importer: I,
     env: E,
+    pc: usize,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -167,11 +170,14 @@ use super::importer::DefaultImporter;
 pub fn debug_runtime(module: Module) -> Result<Runtime<DebugEnv, DefaultImporter>, RuntimeError> {
     let mut runtime = Runtime {
         root: 0,
+        instrs: vec![],
         env_name: "env".into(),
         instances: vec![],
         store: Store::new(),
         importer: DefaultImporter::new(),
         env: DebugEnv {},
+        stack: Stack::new(),
+        pc: 0,
     };
 
     let instance = runtime.new_instance(module)?;
@@ -191,6 +197,25 @@ pub fn eval_const(expr: Expr) -> Result<Value, RuntimeError> {
 }
 
 impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
+    pub fn allocate_func(
+        &mut self,
+        functype: FuncType,
+        locals: Vec<ValType>,
+        instrs: Vec<Instr>,
+        instance_addr: Addr,
+    ) -> Addr {
+        let start = self.instrs.len();
+        self.instrs.extend(instrs);
+        self.instrs.extend(vec![Instr::Return]);
+        self.store.funcs.push(FuncInst::InnerFunc {
+            instance_addr,
+            start,
+            functype,
+            locals,
+        });
+        self.store.funcs.len() - 1
+    }
+
     pub fn new<S: Into<String>>(
         importer: I,
         env: E,
@@ -199,11 +224,14 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
     ) -> Result<Self, RuntimeError> {
         let mut runtime = Runtime {
             root: 0,
+            instrs: vec![],
             instances: vec![],
             store: Store::new(),
             importer,
             env,
             env_name: env_name.into(),
+            stack: Stack::new(),
+            pc: 0,
         };
 
         let instance = runtime.new_instance(module)?;
@@ -222,10 +250,9 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
             match import.desc {
                 ImportDesc::TypeIdx(idx) => {
                     if import.module == self.env_name {
-                        let addr = self.store.allocate(FuncInst::HostFunc {
-                            functype: module.types[idx as usize].clone(),
-                            name: import.name,
-                        });
+                        let addr = self
+                            .store
+                            .allocate_env_func(module.types[idx as usize].clone(), import.name);
                         funcaddrs.push(addr);
                     } else {
                         funcaddrs.push(self.get_func_addr(&import.module, &import.name)?);
@@ -237,19 +264,13 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
 
         let mut globaladdrs = vec![];
         for global in module.globals {
-            globaladdrs.push(self.store.allocate(GlobalInst {
-                globaltype: global.type_,
-                value: eval_const(global.value)?,
-            }));
+            globaladdrs.push(self.store.allocate_global(global)?);
         }
 
         let mut inner_funcaddr = vec![];
         for func in module.funcs {
-            let addr = self.store.allocate(FuncInst::InnerFunc {
-                functype: module.types[func.typeidx as usize].clone(),
-                instance_addr: self.instances.len(),
-                func,
-            });
+            let functype = module.types[func.typeidx as usize].clone();
+            let addr = self.allocate_func(functype, func.locals, func.body.0, self.instances.len());
             inner_funcaddr.push(addr);
             funcaddrs.push(addr);
         }
@@ -263,7 +284,6 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
             types: module.types,
             start: module.start.map(|idx| idx as usize),
             exports: module.exports,
-            stack: Stack::new(),
         })
     }
 
@@ -300,26 +320,22 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
                         n: 0,
                         instance_addr: self.root,
                         local: vec![],
+                        pc: 0,
                     };
                     self.env
                         .call(&name, frame)
                         .map_err(|err| RuntimeError::Env(err))?;
                 }
-                FuncInst::InnerFunc { func, .. } => {
-                    let mut frame = Frame {
+                FuncInst::InnerFunc { start, .. } => {
+                    let frame = Frame {
                         n: 0,
                         instance_addr: self.root,
                         local: vec![],
+                        pc: 0,
                     };
 
-                    exec(
-                        &mut self.env,
-                        &mut self.instances,
-                        &mut self.store,
-                        &func.body.0,
-                        &mut frame,
-                    )
-                    .map_err(|trap| RuntimeError::Trap(trap))?;
+                    self.exec(frame, start)
+                        .map_err(|trap| RuntimeError::Trap(trap))?;
                 }
             }
         }
@@ -335,7 +351,8 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
         {
             match export.desc {
                 ExportDesc::Func(index) => {
-                    match self.store.funcs[self.instances[self.root].funcaddrs[index as usize]]
+                    let results = match self.store.funcs
+                        [self.instances[self.root].funcaddrs[index as usize]]
                         .clone()
                     {
                         FuncInst::HostFunc { name, .. } => {
@@ -343,28 +360,26 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
                                 n: 0,
                                 instance_addr: self.root,
                                 local: vec![],
+                                pc: 0,
                             };
                             self.env
                                 .call(&name, frame)
-                                .map_err(|err| RuntimeError::Env(err))?;
+                                .map_err(|err| RuntimeError::Env(err))?
                         }
-                        FuncInst::InnerFunc { func, functype, .. } => {
-                            let mut frame = Frame {
+                        FuncInst::InnerFunc {
+                            start, functype, ..
+                        } => {
+                            let frame = Frame {
                                 n: functype.1 .0.len(),
                                 instance_addr: self.root,
                                 local: params,
+                                pc: 0,
                             };
-                            exec(
-                                &mut self.env,
-                                &mut self.instances,
-                                &mut self.store,
-                                &func.body.0,
-                                &mut frame,
-                            )
-                            .map_err(|trap| RuntimeError::Trap(trap))?;
+                            self.exec(frame, start)
+                                .map_err(|trap| RuntimeError::Trap(trap))?
                         }
-                    }
-                    Ok(self.instances[self.root].stack.get_returns())
+                    };
+                    Ok(results)
                 }
                 _ => Err(RuntimeError::NotFunction(name.into(), export.desc.clone())),
             }
@@ -372,129 +387,138 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
             Err(RuntimeError::FunctionNotFound(name.into()))
         }
     }
-}
 
-pub fn exec<E: Env + Debug>(
-    env: &mut E,
-    instances: &mut Vec<Instance>,
-    store: &mut Store,
-    instrs: &Vec<Instr>,
-    frame: &mut Frame,
-) -> Result<ExecState, Trap> {
-    let mut next = 0;
-    loop {
-        if next >= instrs.len() {
-            return Ok(ExecState::Return);
+    pub fn exec(&mut self, frame: Frame, start: usize) -> Result<Vec<Value>, Trap> {
+        let mut stack = Stack::new();
+        stack.push_frame(frame);
+        self.stack = stack;
+        self.pc = start;
+        while self.step()? == ExecState::Continue {}
+        Ok(self.stack.get_returns())
+    }
+
+    pub fn step(&mut self) -> Result<ExecState, Trap> {
+        if let Some(new_pc) = step(
+            &mut self.env,
+            &mut self.instances,
+            &self.instrs,
+            self.pc,
+            &mut self.store,
+            &mut self.stack,
+        )? {
+            self.pc = new_pc;
+            Ok(ExecState::Continue)
+        } else {
+            Ok(ExecState::Terminate)
         }
-        match step(env, instances, &instrs[next], frame, store)? {
-            ExecState::Continue => {}
-            ret => return Ok(ret),
-        }
-        next += 1;
     }
 }
 
 pub fn step<E: Env + Debug>(
     env: &mut E,
     instances: &mut Vec<Instance>,
-    instr: &Instr,
-    frame: &mut Frame,
+    instrs: &Vec<Instr>,
+    pc: usize,
     store: &mut Store,
-) -> Result<ExecState, Trap> {
+    stack: &mut Stack,
+) -> Result<Option<usize>, Trap> {
+    let frame = stack.top_frame().clone();
     let instance = &mut instances[frame.instance_addr];
-    match instr {
-        Instr::I32Const(a) => instance.stack.push_value(*a),
-        Instr::I64Const(a) => instance.stack.push_value(*a),
-        Instr::F32Const(a) => instance.stack.push_value(*a),
-        Instr::F64Const(a) => instance.stack.push_value(*a),
-        Instr::I32Add => instance.binary_op(|a: i32, b: i32| a.wrapping_add(b)),
-        Instr::I64Add => instance.binary_op(|a: i64, b: i64| a.wrapping_add(b)),
-        Instr::I32Sub => instance.binary_op(|a: i32, b: i32| a.wrapping_sub(b)),
-        Instr::I64Sub => instance.binary_op(|a: i64, b: i64| a.wrapping_sub(b)),
-        Instr::I32And => instance.binary_op(|a: i32, b: i32| a & b),
-        Instr::I64And => instance.binary_op(|a: i64, b: i64| a & b),
-        Instr::I64Xor => instance.binary_op(|a: i64, b: i64| a ^ b),
-        Instr::I32Mul => instance.binary_op(|a: i32, b: i32| a.wrapping_mul(b)),
-        Instr::I64Mul => instance.binary_op(|a: i64, b: i64| a.wrapping_mul(b)),
-        Instr::I32DivU => instance.binary_op(|a: i32, b: i32| a / b),
-        Instr::I64RemS => instance.binary_op(|a: i64, b: i64| a.wrapping_rem(b)),
+    match &instrs[pc] {
+        Instr::I32Const(a) => stack.push_value(*a),
+        Instr::I64Const(a) => stack.push_value(*a),
+        Instr::F32Const(a) => stack.push_value(*a),
+        Instr::F64Const(a) => stack.push_value(*a),
+        Instr::I32Add => stack.binary_op(|a: i32, b: i32| a.wrapping_add(b)),
+        Instr::I64Add => stack.binary_op(|a: i64, b: i64| a.wrapping_add(b)),
+        Instr::I32Sub => stack.binary_op(|a: i32, b: i32| a.wrapping_sub(b)),
+        Instr::I64Sub => stack.binary_op(|a: i64, b: i64| a.wrapping_sub(b)),
+        Instr::I32And => stack.binary_op(|a: i32, b: i32| a & b),
+        Instr::I64And => stack.binary_op(|a: i64, b: i64| a & b),
+        Instr::I64Xor => stack.binary_op(|a: i64, b: i64| a ^ b),
+        Instr::I32Mul => stack.binary_op(|a: i32, b: i32| a.wrapping_mul(b)),
+        Instr::I64Mul => stack.binary_op(|a: i64, b: i64| a.wrapping_mul(b)),
+        Instr::I32DivU => stack.binary_op(|a: i32, b: i32| a / b),
+        Instr::I64RemS => stack.binary_op(|a: i64, b: i64| a.wrapping_rem(b)),
+        Instr::I32LeS => stack.rel_op(|a: i32, b: i32| if a <= b { 1 } else { 0 }),
         Instr::Nop => {}
         Instr::Drop => {
-            instance.stack.pop_value::<Value>();
+            stack.pop_value::<Value>();
         }
         Instr::Unreachable => return Err(Trap::Unreachable),
-        Instr::Block { in1, bt } => {
-            instance.stack.push_label(Label {
+        Instr::Block { bt, end_offset } => {
+            stack.push_label(Label {
                 n: instance.block_to_arity(bt),
-                offset: instance.stack.values_len(),
+                offset: stack.values_len(),
+                pc: end_offset + pc,
             });
-            match exec(env, instances, store, in1, frame)? {
-                ExecState::Breaking(l) if l > 0 => return Ok(ExecState::Breaking(l - 1)),
-                _ => {}
-            }
         }
-        Instr::Loop { in1, bt } => loop {
-            let n = instances[frame.instance_addr].block_to_arity(bt);
-            let offset = instances[frame.instance_addr].stack.values_len();
-            instances[frame.instance_addr]
-                .stack
-                .push_label(Label { n, offset });
-            match exec(env, instances, store, in1, frame)? {
-                ExecState::Breaking(l) if l > 0 => return Ok(ExecState::Breaking(l - 1)),
-                ExecState::Return => return Ok(ExecState::Return),
-                _ => {}
-            }
-        },
-        Instr::If { in1, in2, .. } => {
-            let c = instance.stack.pop_value::<i32>();
+        Instr::Loop { bt } => {
+            stack.push_label(Label {
+                n: instance.block_to_arity(bt),
+                offset: stack.values_len(),
+                pc,
+            });
+        }
+        Instr::If {
+            bt,
+            else_offset,
+            end_offset,
+        } => {
+            let c = stack.pop_value::<i32>();
             if c != 0 {
-                match exec(env, instances, store, in1, frame)? {
-                    ExecState::Breaking(l) if l > 0 => return Ok(ExecState::Breaking(l - 1)),
-                    ExecState::Return => return Ok(ExecState::Return),
-                    _ => {}
-                }
-            } else if let Some(in2) = in2 {
-                match exec(env, instances, store, in2, frame)? {
-                    ExecState::Breaking(l) if l > 0 => {
-                        return Ok(ExecState::Breaking(l - 1));
-                    }
-                    ExecState::Return => return Ok(ExecState::Return),
-                    _ => {}
-                }
+                stack.push_label(Label {
+                    n: instance.block_to_arity(bt),
+                    offset: stack.values_len(),
+                    pc: end_offset + pc,
+                });
+            } else if let Some(else_offset) = else_offset {
+                stack.push_label(Label {
+                    n: instance.block_to_arity(bt),
+                    offset: stack.values_len(),
+                    pc: end_offset + pc,
+                });
+                return Ok(Some(else_offset + pc));
+            } else {
+                return Ok(Some(end_offset + pc));
             }
         }
         Instr::Br(l) => {
-            instance.jump(*l as usize);
-            return Ok(ExecState::Breaking(*l));
+            let new_pc = stack.jump(*l as usize);
+            return Ok(Some(new_pc));
         }
         Instr::BrIf(l) => {
-            let c = instance.stack.pop_value::<i32>();
+            let c = stack.pop_value::<i32>();
             if c != 0 {
-                instance.jump(*l as usize);
-                return Ok(ExecState::Breaking(*l));
+                let new_pc = stack.jump(*l as usize);
+                return Ok(Some(new_pc));
             }
         }
         Instr::BrTable { indexs, default } => {
-            let i = instance.stack.pop_value::<i32>() as usize;
+            let i = stack.pop_value::<i32>() as usize;
             return if i <= indexs.len() {
-                instance.jump(indexs[i] as usize);
-                Ok(ExecState::Breaking(indexs[i]))
+                let new_pc = stack.jump(indexs[i] as usize);
+                Ok(Some(new_pc))
             } else {
-                instance.jump(*default as usize);
-                Ok(ExecState::Breaking(*default))
+                let new_pc = stack.jump(*default as usize);
+                Ok(Some(new_pc))
             };
         }
         Instr::Return => {
             let n = frame.n;
             let mut results: Vec<Value> = vec![];
             for _ in 0..n {
-                results.push(instance.stack.pop_value());
+                results.push(stack.pop_value());
             }
-
             for _ in 0..n {
-                instance.stack.push_value(results.pop().unwrap());
+                stack.push_value(results.pop().unwrap());
             }
-            return Ok(ExecState::Return);
+            stack.pop_frame();
+            if stack.frames_len() == 0 {
+                return Ok(None);
+            } else {
+                return Ok(Some(frame.pc));
+            }
         }
         Instr::Call(a) => {
             let func = store.funcs[*a as usize].clone();
@@ -502,76 +526,76 @@ pub fn step<E: Env + Debug>(
                 FuncInst::HostFunc { name, functype } => {
                     let mut local = vec![];
                     for _ in 0..functype.0 .0.len() {
-                        local.push(instance.stack.pop_value());
+                        local.push(stack.pop_value());
                     }
                     let new_frame = Frame {
                         n: functype.1 .0.len(),
                         instance_addr: frame.instance_addr,
                         local,
+                        pc: pc + 1,
                     };
                     let results = env
                         .call(name.as_str(), new_frame)
                         .map_err(|err| Trap::Env(err))?;
-
                     for result in results {
-                        instance.stack.push_value(result);
+                        stack.push_value(result);
                     }
                 }
                 FuncInst::InnerFunc {
-                    functype,
                     instance_addr,
-                    func,
+                    functype,
+                    locals,
+                    start,
                 } => {
                     let mut local = vec![];
                     for _ in 0..functype.0 .0.len() {
-                        local.push(instance.stack.pop_value());
+                        local.push(stack.pop_value());
                     }
-                    let mut new_frame = Frame {
+                    for val in locals.iter() {
+                        match val {
+                            ValType::I32 => local.push(Value::I32(0)),
+                            ValType::I64 => local.push(Value::I64(0)),
+                            ValType::F32 => local.push(Value::F32(0.0)),
+                            ValType::F64 => local.push(Value::F64(0.0)),
+                            _ => todo!(),
+                        }
+                    }
+                    let new_frame = Frame {
                         n: functype.1 .0.len(),
                         instance_addr,
                         local,
+                        pc: pc + 1,
                     };
-                    exec(env, instances, store, &func.body.0, &mut new_frame)?;
-
-                    if frame.instance_addr != new_frame.instance_addr {
-                        unsafe {
-                            let origin_instance =
-                                core::ptr::addr_of_mut!(instances[frame.instance_addr]);
-                            let derived_instance =
-                                core::ptr::addr_of_mut!(instances[new_frame.instance_addr]);
-                            for result in (*derived_instance).stack.get_returns() {
-                                (*origin_instance).stack.push_value(result)
-                            }
-                        }
-                    }
+                    stack.push_frame(new_frame);
+                    return Ok(Some(start));
                 }
             }
         }
         Instr::LocalGet(l) => {
             let value = frame.local[*l as usize];
-            instance.stack.push_value(value);
+            stack.push_value(value);
         }
         Instr::LocalSet(l) => {
-            let value = instance.stack.pop_value();
-            frame.local[*l as usize] = value;
+            let value = stack.pop_value();
+            stack.top_frame_mut().local[*l as usize] = value;
         }
         Instr::LocalTee(l) => {
-            let value: Value = instance.stack.pop_value();
-            instance.stack.push_value(value);
-            frame.local[*l as usize] = value;
+            let value: Value = stack.pop_value();
+            stack.push_value(value);
+            stack.top_frame_mut().local[*l as usize] = value;
         }
         Instr::GlobalGet(i) => {
             let globalindex = instance.globaladdrs[*i as usize];
-            instance.stack.push_value(store.globals[globalindex].value);
+            stack.push_value(store.globals[globalindex].value);
         }
         Instr::GlobalSet(i) => {
-            let value = instance.stack.pop_value();
+            let value = stack.pop_value();
             let globalindex = instance.globaladdrs[*i as usize];
             store.globals[globalindex].value = value;
         }
         i => return Err(Trap::NotImplemented(format!("{:?}", i))),
     }
-    Ok(ExecState::Continue)
+    Ok(Some(pc + 1))
 }
 
 #[cfg(test)]
@@ -647,6 +671,30 @@ mod tests {
             runtime.invoke("main", vec![]),
             Ok(vec![Value::I32(3), Value::I32(5), Value::I32(6)])
         );
+    }
+
+    #[test]
+    fn if_else() {
+        let wasm = wat2wasm(
+            r#"(module
+                    (func (export "main") (result i32)
+                        i32.const 0
+                        (if
+                            (then
+                                i32.const 1
+                            )
+                            (else
+                                i32.const 2
+                            )
+                        )
+                    )
+                )"#,
+        )
+        .unwrap();
+        let mut parser = Parser::new(&wasm);
+        let module = parser.module().unwrap();
+        let mut runtime = debug_runtime(module).unwrap();
+        assert_eq!(runtime.invoke("main", vec![]), Ok(vec![Value::I32(2)]));
     }
 
     #[test]
@@ -800,35 +848,50 @@ mod tests {
     }
 
     #[test]
-    fn host_function() {
-        let main = Parser::new(
-            &wat2wasm(
-                r#"(module
-                        (import "inc" "inc" (func $inc (result i32)))
-                        (func (export "main") (result i32 i32 i32 i32 i32)
-                             call $inc
-                             call $inc
-                             call $inc
-                             call $inc
-                             call $inc
-                        )
-                    )"#,
-            )
-            .unwrap(),
+    fn loop_behavior() {
+        let wasm = wat2wasm(
+            r#"(module
+                    (func $sum_bad (param $n i32) (result i32)  (local $i i32) (local $sum i32)
+                        (loop $loop
+                          (br_if $loop (i32.le_s (get_local $n) (get_local $i)))
+                          (set_local $sum (i32.add (get_local $sum) (get_local $i)))
+                          (set_local $i (i32.add (get_local $i) (i32.const 1))))
+                        (return (get_local $sum))
+                    )
+                    (func (export "main") (result i32)
+                        i32.const 10
+                        call $sum_bad
+                    )
+            )"#,
         )
-        .module()
         .unwrap();
 
-        let mut runtime = Runtime::new(DefaultImporter::new(), DebugEnv {}, "env", main).unwrap();
-        assert_eq!(
-            runtime.invoke("main", vec![]),
-            Ok(vec![
-                Value::I32(1),
-                Value::I32(2),
-                Value::I32(3),
-                Value::I32(4),
-                Value::I32(5)
-            ])
-        );
+        let mut parser = Parser::new(&wasm);
+        let module = parser.module().unwrap();
+        let mut runtime = debug_runtime(module).unwrap();
+        assert_eq!(runtime.invoke("main", vec![]), Ok(vec![Value::I32(0)]));
+
+        let wasm = wat2wasm(
+            r#"(module
+                    (func $sum_good (param $n i32) (result i32)  (local $i i32) (local $sum i32)
+                        (loop $loop
+                            (set_local $sum (i32.add (get_local $sum) (get_local $i)))
+                            (set_local $i (i32.add (get_local $i) (i32.const 1)))
+                            (br_if $loop (i32.le_s (get_local $i) (get_local $n)))
+                        )
+                        (return (get_local $sum))
+                    )
+                    (func (export "main") (result i32)
+                        i32.const 10
+                        call $sum_good
+                    )
+            )"#,
+        )
+        .unwrap();
+
+        let mut parser = Parser::new(&wasm);
+        let module = parser.module().unwrap();
+        let mut runtime = debug_runtime(module).unwrap();
+        assert_eq!(runtime.invoke("main", vec![]), Ok(vec![Value::I32(55)]));
     }
 }

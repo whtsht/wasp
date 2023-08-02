@@ -34,16 +34,19 @@ pub enum Instr {
     Nop,
     Block {
         bt: Block,
-        in1: Vec<Instr>,
+        //in1: Vec<Instr>,
+        end_offset: usize,
     },
     Loop {
         bt: Block,
-        in1: Vec<Instr>,
+        //in1: Vec<Instr>,
     },
     If {
         bt: Block,
-        in1: Vec<Instr>,
-        in2: Option<Vec<Instr>>,
+        // in1: Vec<Instr>,
+        // in2: Option<Vec<Instr>>,
+        else_offset: Option<usize>,
+        end_offset: usize,
     },
     Br(LabelIdx),
     BrIf(LabelIdx),

@@ -83,6 +83,7 @@ impl Into<Value> for f64 {
 pub struct Label {
     pub n: usize,
     pub offset: usize,
+    pub pc: usize,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -90,12 +91,13 @@ pub struct Frame {
     pub n: usize,
     pub instance_addr: Addr,
     pub local: Vec<Value>,
+    pub pc: usize,
 }
 
 #[derive(Debug, PartialEq, Default, Clone)]
 pub struct Stack {
     values: Vec<Value>,
-    labels: Vec<Label>,
+    pub labels: Vec<Label>,
     frames: Vec<Frame>,
 }
 
@@ -177,13 +179,35 @@ mod tests {
 
     #[test]
     fn stack_label() {
-        let label1 = Label { n: 0, offset: 0 };
-        let label2 = Label { n: 0, offset: 1 };
+        let label1 = Label {
+            n: 0,
+            offset: 0,
+            pc: 10,
+        };
+        let label2 = Label {
+            n: 0,
+            offset: 1,
+            pc: 0,
+        };
         let mut stack = Stack::new();
         stack.push_label(label1);
         stack.push_label(label2);
-        assert_eq!(stack.pop_label(), Label { n: 0, offset: 1 });
-        assert_eq!(stack.pop_label(), Label { n: 0, offset: 0 });
+        assert_eq!(
+            stack.pop_label(),
+            Label {
+                n: 0,
+                offset: 1,
+                pc: 0
+            }
+        );
+        assert_eq!(
+            stack.pop_label(),
+            Label {
+                n: 0,
+                offset: 0,
+                pc: 10
+            }
+        );
 
         assert!(stack.is_empty());
     }
@@ -194,11 +218,13 @@ mod tests {
             n: 0,
             instance_addr: 0,
             local: vec![],
+            pc: 0,
         };
         let frame2 = Frame {
             n: 0,
             instance_addr: 0,
             local: vec![Value::I32(1), Value::F32(3.0)],
+            pc: 0,
         };
         let mut stack = Stack::new();
         stack.push_frame(frame1);
@@ -210,6 +236,7 @@ mod tests {
                 n: 0,
                 instance_addr: 0,
                 local: vec![Value::I32(1), Value::F32(3.0)],
+                pc: 0
             }
         );
         assert_eq!(
@@ -218,6 +245,7 @@ mod tests {
                 n: 0,
                 instance_addr: 0,
                 local: vec![],
+                pc: 0
             }
         );
         assert!(stack.is_empty());
