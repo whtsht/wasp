@@ -164,7 +164,16 @@ pub fn step<E: Env + Debug>(
         Instr::Drop => {
             stack.pop_value::<Value>();
         }
-        Instr::Select => todo!(),
+        Instr::Select => {
+            let c = stack.pop_value::<i32>();
+            let val2 = stack.pop_value::<Value>();
+            let val1 = stack.pop_value::<Value>();
+            if c != 0 {
+                stack.push_value(val1);
+            } else {
+                stack.push_value(val2);
+            }
+        }
 
         ///////////////////////////
         // Variable Instructions //
