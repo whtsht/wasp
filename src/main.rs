@@ -1,6 +1,6 @@
 use std::{env, fs::File, io::Read};
 
-use watagasi::{
+use wasp::{
     exec::{runtime::debug_runtime, stack::Value},
     loader::parser::Parser,
 };
