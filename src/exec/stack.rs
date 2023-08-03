@@ -10,8 +10,8 @@ pub enum Value {
     F32(f32),
     F64(f64),
     NullRef,
-    FuncRef,
-    ExternRef,
+    FuncRef(Addr),
+    ExternRef(Addr),
 }
 
 impl From<Value> for i32 {

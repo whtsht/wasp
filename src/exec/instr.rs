@@ -154,9 +154,18 @@ pub fn step<E: Env + Debug>(
         ////////////////////////////
         // Reference Instructions //
         ////////////////////////////
-        Instr::RefNull(_) => todo!(),
-        Instr::RefIsNull => todo!(),
-        Instr::RefFunc(_) => todo!(),
+        Instr::RefNull(_) => stack.push_value(Value::NullRef),
+        Instr::RefIsNull => {
+            let c = match stack.pop_value::<Value>() {
+                Value::NullRef => Value::I32(1),
+                _ => Value::I32(0),
+            };
+            stack.push_value(c);
+        }
+        Instr::RefFunc(x) => {
+            let addr = instance.funcaddrs[*x as usize];
+            stack.push_value(Value::FuncRef(addr));
+        }
 
         /////////////////////////////
         // Parametric Instructions //
