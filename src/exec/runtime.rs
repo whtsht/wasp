@@ -3,12 +3,14 @@ use crate::lib::*;
 
 use super::env::{Env, EnvError};
 use super::importer::Importer;
-use super::stack::{Frame, Label, Stack, Value};
+use super::instr::step;
+use super::stack::{Frame, Stack, Value};
 use super::trap::Trap;
 use crate::binary::{Block, Export};
 use crate::binary::{ExportDesc, FuncType, ImportDesc, Instr, Module};
 use crate::binary::{Expr, ValType};
 use crate::binary::{Global, GlobalType};
+use core::fmt::Debug;
 
 pub type Addr = usize;
 
@@ -18,51 +20,13 @@ pub enum ExecState {
     Terminate,
 }
 
-impl Stack {
-    pub fn binary_op<F: Fn(T, T) -> T, T: From<Value> + Into<Value>>(&mut self, func: F) {
-        let rhs = self.pop_value::<T>();
-        let lhs = self.pop_value::<T>();
-        let r = func(lhs, rhs);
-        self.push_value(r);
-    }
-
-    pub fn rel_op<F: Fn(T, T) -> T, T: From<Value> + Into<Value>>(&mut self, func: F) {
-        let rhs = self.pop_value::<T>();
-        let lhs = self.pop_value::<T>();
-        let r = func(lhs, rhs);
-        self.push_value(r);
-    }
-
-    pub fn jump(&mut self, l: usize) -> usize {
-        let label = self.th_label(l);
-        let mut values: Vec<Value> = vec![];
-        for _ in 0..label.n {
-            values.push(self.pop_value());
-        }
-
-        let len = self.values_len() - label.offset;
-        for _ in 0..len {
-            self.pop_value::<Value>();
-        }
-
-        for _ in 0..=l {
-            self.pop_label();
-        }
-
-        for value in values.into_iter().rev() {
-            self.push_value(value);
-        }
-        label.pc
-    }
-}
-
 #[derive(Debug, PartialEq, Default, Clone)]
 pub struct Instance {
-    funcaddrs: Vec<Addr>,
-    globaladdrs: Vec<Addr>,
-    types: Vec<FuncType>,
-    start: Option<usize>,
-    exports: Vec<Export>,
+    pub funcaddrs: Vec<Addr>,
+    pub globaladdrs: Vec<Addr>,
+    pub types: Vec<FuncType>,
+    pub start: Option<usize>,
+    pub exports: Vec<Export>,
 }
 
 impl Instance {
@@ -97,8 +61,8 @@ pub struct GlobalInst {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Store {
-    funcs: Vec<FuncInst>,
-    globals: Vec<GlobalInst>,
+    pub funcs: Vec<FuncInst>,
+    pub globals: Vec<GlobalInst>,
 }
 
 impl Store {
@@ -137,7 +101,6 @@ impl Store {
     }
 }
 
-use core::fmt::Debug;
 #[derive(Debug)]
 pub struct Runtime<E: Env + Debug, I: Importer + Debug> {
     env_name: String,
@@ -412,190 +375,6 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
             Ok(ExecState::Terminate)
         }
     }
-}
-
-pub fn step<E: Env + Debug>(
-    env: &mut E,
-    instances: &mut Vec<Instance>,
-    instrs: &Vec<Instr>,
-    pc: usize,
-    store: &mut Store,
-    stack: &mut Stack,
-) -> Result<Option<usize>, Trap> {
-    let frame = stack.top_frame().clone();
-    let instance = &mut instances[frame.instance_addr];
-    match &instrs[pc] {
-        Instr::I32Const(a) => stack.push_value(*a),
-        Instr::I64Const(a) => stack.push_value(*a),
-        Instr::F32Const(a) => stack.push_value(*a),
-        Instr::F64Const(a) => stack.push_value(*a),
-        Instr::I32Add => stack.binary_op(|a: i32, b: i32| a.wrapping_add(b)),
-        Instr::I64Add => stack.binary_op(|a: i64, b: i64| a.wrapping_add(b)),
-        Instr::I32Sub => stack.binary_op(|a: i32, b: i32| a.wrapping_sub(b)),
-        Instr::I64Sub => stack.binary_op(|a: i64, b: i64| a.wrapping_sub(b)),
-        Instr::I32And => stack.binary_op(|a: i32, b: i32| a & b),
-        Instr::I64And => stack.binary_op(|a: i64, b: i64| a & b),
-        Instr::I64Xor => stack.binary_op(|a: i64, b: i64| a ^ b),
-        Instr::I32Mul => stack.binary_op(|a: i32, b: i32| a.wrapping_mul(b)),
-        Instr::I64Mul => stack.binary_op(|a: i64, b: i64| a.wrapping_mul(b)),
-        Instr::I32DivU => stack.binary_op(|a: i32, b: i32| a / b),
-        Instr::I64RemS => stack.binary_op(|a: i64, b: i64| a.wrapping_rem(b)),
-        Instr::I32LeS => stack.rel_op(|a: i32, b: i32| if a <= b { 1 } else { 0 }),
-        Instr::Nop => {}
-        Instr::Drop => {
-            stack.pop_value::<Value>();
-        }
-        Instr::Unreachable => return Err(Trap::Unreachable),
-        Instr::Block { bt, end_offset } => {
-            stack.push_label(Label {
-                n: instance.block_to_arity(bt),
-                offset: stack.values_len(),
-                pc: end_offset + pc,
-            });
-        }
-        Instr::Loop { bt } => {
-            stack.push_label(Label {
-                n: instance.block_to_arity(bt),
-                offset: stack.values_len(),
-                pc,
-            });
-        }
-        Instr::If {
-            bt,
-            else_offset,
-            end_offset,
-        } => {
-            let c = stack.pop_value::<i32>();
-            if c != 0 {
-                stack.push_label(Label {
-                    n: instance.block_to_arity(bt),
-                    offset: stack.values_len(),
-                    pc: end_offset + pc,
-                });
-            } else if let Some(else_offset) = else_offset {
-                stack.push_label(Label {
-                    n: instance.block_to_arity(bt),
-                    offset: stack.values_len(),
-                    pc: end_offset + pc,
-                });
-                return Ok(Some(else_offset + pc));
-            } else {
-                return Ok(Some(end_offset + pc));
-            }
-        }
-        Instr::Br(l) => {
-            let new_pc = stack.jump(*l as usize);
-            return Ok(Some(new_pc));
-        }
-        Instr::BrIf(l) => {
-            let c = stack.pop_value::<i32>();
-            if c != 0 {
-                let new_pc = stack.jump(*l as usize);
-                return Ok(Some(new_pc));
-            }
-        }
-        Instr::BrTable { indexs, default } => {
-            let i = stack.pop_value::<i32>() as usize;
-            return if i <= indexs.len() {
-                let new_pc = stack.jump(indexs[i] as usize);
-                Ok(Some(new_pc))
-            } else {
-                let new_pc = stack.jump(*default as usize);
-                Ok(Some(new_pc))
-            };
-        }
-        Instr::Return => {
-            let n = frame.n;
-            let mut results: Vec<Value> = vec![];
-            for _ in 0..n {
-                results.push(stack.pop_value());
-            }
-            for _ in 0..n {
-                stack.push_value(results.pop().unwrap());
-            }
-            stack.pop_frame();
-            if stack.frames_len() == 0 {
-                return Ok(None);
-            } else {
-                return Ok(Some(frame.pc));
-            }
-        }
-        Instr::Call(a) => {
-            let func = store.funcs[*a as usize].clone();
-            match func {
-                FuncInst::HostFunc { name, functype } => {
-                    let mut local = vec![];
-                    for _ in 0..functype.0 .0.len() {
-                        local.push(stack.pop_value());
-                    }
-                    let new_frame = Frame {
-                        n: functype.1 .0.len(),
-                        instance_addr: frame.instance_addr,
-                        local,
-                        pc: pc + 1,
-                    };
-                    let results = env
-                        .call(name.as_str(), new_frame)
-                        .map_err(|err| Trap::Env(err))?;
-                    for result in results {
-                        stack.push_value(result);
-                    }
-                }
-                FuncInst::InnerFunc {
-                    instance_addr,
-                    functype,
-                    locals,
-                    start,
-                } => {
-                    let mut local = vec![];
-                    for _ in 0..functype.0 .0.len() {
-                        local.push(stack.pop_value());
-                    }
-                    for val in locals.iter() {
-                        match val {
-                            ValType::I32 => local.push(Value::I32(0)),
-                            ValType::I64 => local.push(Value::I64(0)),
-                            ValType::F32 => local.push(Value::F32(0.0)),
-                            ValType::F64 => local.push(Value::F64(0.0)),
-                            _ => todo!(),
-                        }
-                    }
-                    let new_frame = Frame {
-                        n: functype.1 .0.len(),
-                        instance_addr,
-                        local,
-                        pc: pc + 1,
-                    };
-                    stack.push_frame(new_frame);
-                    return Ok(Some(start));
-                }
-            }
-        }
-        Instr::LocalGet(l) => {
-            let value = frame.local[*l as usize];
-            stack.push_value(value);
-        }
-        Instr::LocalSet(l) => {
-            let value = stack.pop_value();
-            stack.top_frame_mut().local[*l as usize] = value;
-        }
-        Instr::LocalTee(l) => {
-            let value: Value = stack.pop_value();
-            stack.push_value(value);
-            stack.top_frame_mut().local[*l as usize] = value;
-        }
-        Instr::GlobalGet(i) => {
-            let globalindex = instance.globaladdrs[*i as usize];
-            stack.push_value(store.globals[globalindex].value);
-        }
-        Instr::GlobalSet(i) => {
-            let value = stack.pop_value();
-            let globalindex = instance.globaladdrs[*i as usize];
-            store.globals[globalindex].value = value;
-        }
-        i => return Err(Trap::NotImplemented(format!("{:?}", i))),
-    }
-    Ok(Some(pc + 1))
 }
 
 #[cfg(test)]

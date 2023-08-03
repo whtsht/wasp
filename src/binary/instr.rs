@@ -261,6 +261,4 @@ pub enum Instr {
     I64TruncSatF32U,
     I64TruncSatF64S,
     I64TruncSatF64U,
-    // Vector Instruction
-    // TODO
 }

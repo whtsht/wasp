@@ -9,8 +9,6 @@ edition = "2021"
 path = "src/main.rs"
 name = "watagasi"
 
-[dependencies]
-
 [dev-dependencies]
 wat = "*"
 

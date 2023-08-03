@@ -1,7 +1,7 @@
 #[cfg(not(feature = "std"))]
 use crate::lib::*;
 
-use super::runtime::Addr;
+use super::{runtime::Addr, trap::Trap};
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Value {
@@ -9,7 +9,6 @@ pub enum Value {
     I64(i64),
     F32(f32),
     F64(f64),
-    // TODO Vector
     NullRef,
     FuncRef,
     ExternRef,
@@ -86,7 +85,7 @@ pub struct Label {
     pub pc: usize,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Default)]
 pub struct Frame {
     pub n: usize,
     pub instance_addr: Addr,
@@ -108,6 +107,18 @@ impl Stack {
             labels: vec![],
             frames: vec![],
         }
+    }
+
+    pub fn values(&self) -> &Vec<Value> {
+        &self.values
+    }
+
+    pub fn labels(&self) -> &Vec<Label> {
+        &self.labels
+    }
+
+    pub fn frames(&self) -> &Vec<Frame> {
+        &self.frames
     }
 
     pub fn values_len(&self) -> usize {
@@ -168,6 +179,100 @@ impl Stack {
 
     pub fn top_frame_mut(&mut self) -> &mut Frame {
         self.frames.last_mut().unwrap()
+    }
+}
+
+impl Stack {
+    pub fn unop<T, F: Fn(T) -> T>(&mut self, func: F)
+    where
+        T: From<Value> + Into<Value>,
+    {
+        let v = self.pop_value::<T>();
+        let r = func(v);
+        self.push_value(r);
+    }
+
+    pub fn binop<T, F: Fn(T, T) -> T>(&mut self, func: F)
+    where
+        T: From<Value> + Into<Value>,
+    {
+        let rhs = self.pop_value::<T>();
+        let lhs = self.pop_value::<T>();
+        let r = func(lhs, rhs);
+        self.push_value(r);
+    }
+
+    pub fn binop_trap<F: Fn(T, T) -> Result<T, Trap>, T>(&mut self, func: F) -> Result<(), Trap>
+    where
+        T: From<Value> + Into<Value>,
+    {
+        let rhs = self.pop_value::<T>();
+        let lhs = self.pop_value::<T>();
+        let r = func(lhs, rhs)?;
+        self.push_value(r);
+        Ok(())
+    }
+
+    pub fn relop<F: Fn(T, T) -> i32, T>(&mut self, func: F)
+    where
+        T: From<Value> + Into<Value>,
+    {
+        let rhs = self.pop_value::<T>();
+        let lhs = self.pop_value::<T>();
+        let r = func(lhs, rhs);
+        self.push_value(r);
+    }
+
+    pub fn testop<F: Fn(T) -> i32, T>(&mut self, func: F)
+    where
+        T: From<Value> + Into<Value>,
+    {
+        let v = self.pop_value::<T>();
+        let r = func(v);
+        self.push_value(r);
+    }
+
+    pub fn cvtop<F: Fn(T) -> U, T, U>(&mut self, func: F)
+    where
+        T: From<Value> + Into<Value>,
+        U: From<Value> + Into<Value>,
+    {
+        let t = self.pop_value::<T>();
+        let u = func(t);
+        self.push_value(u);
+    }
+
+    pub fn cvtop_trap<F: Fn(T) -> Result<U, Trap>, T, U>(&mut self, func: F) -> Result<(), Trap>
+    where
+        T: From<Value> + Into<Value>,
+        U: From<Value> + Into<Value>,
+    {
+        let t = self.pop_value::<T>();
+        let u = func(t)?;
+        self.push_value(u);
+        Ok(())
+    }
+
+    pub fn jump(&mut self, l: usize) -> usize {
+        let label = self.th_label(l);
+        let mut values: Vec<Value> = vec![];
+        for _ in 0..label.n {
+            values.push(self.pop_value());
+        }
+
+        let len = self.values_len() - label.offset;
+        for _ in 0..len {
+            self.pop_value::<Value>();
+        }
+
+        for _ in 0..=l {
+            self.pop_label();
+        }
+
+        for value in values.into_iter().rev() {
+            self.push_value(value);
+        }
+        label.pc
     }
 }
 
