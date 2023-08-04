@@ -5,6 +5,7 @@ pub mod instr;
 pub mod memory;
 pub mod runtime;
 pub mod stack;
+pub mod store;
 pub mod table;
 pub mod trap;
 pub mod value;

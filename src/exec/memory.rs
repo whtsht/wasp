@@ -4,8 +4,9 @@ use crate::{
 };
 
 use super::{
-    runtime::{Addr, DataInst, Instance, MemInst, Store},
+    runtime::{Addr, Instance},
     stack::Stack,
+    store::{DataInst, MemInst, Store},
     trap::Trap,
 };
 

@@ -1,6 +1,7 @@
 use super::env::Env;
-use super::runtime::{FuncInst, Instance, MemInst, Store};
+use super::runtime::Instance;
 use super::stack::{Frame, Label, Stack};
+use super::store::{FuncInst, MemInst, Store};
 use super::table::*;
 use super::trap::Trap;
 use super::value::{Ref, Value};
@@ -582,8 +583,9 @@ mod tests {
         binary::Instr,
         exec::{
             env::DebugEnv,
-            runtime::{Instance, Store},
+            runtime::Instance,
             stack::{Frame, Stack},
+            store::Store,
             trap::Trap,
             value::Value,
         },

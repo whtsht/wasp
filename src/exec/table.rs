@@ -3,8 +3,9 @@ use crate::binary::Elem;
 use crate::lib::*;
 
 use super::{
-    runtime::{eval_const, Addr, ElemInst, Instance, RuntimeError, Store, TableInst},
+    runtime::{eval_const, Addr, Instance, RuntimeError},
     stack::Stack,
+    store::{ElemInst, Store, TableInst},
     trap::Trap,
     value::{Ref, Value},
 };

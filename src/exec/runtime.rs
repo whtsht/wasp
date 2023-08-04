@@ -4,16 +4,13 @@ use crate::lib::*;
 use super::env::{Env, EnvError};
 use super::importer::Importer;
 use super::instr::step;
-use super::memory::{data_active, data_passiv};
 use super::stack::{Frame, Stack};
-use super::table::{elem_active, elem_passiv};
+use super::store::{FuncInst, Store};
 use super::trap::Trap;
 use super::value::{Ref, Value};
-use crate::binary::{Block, Data, DataMode, Elem, Export, Limits, Memory, Table};
-use crate::binary::{ElemMode, RefType};
+use crate::binary::{Block, Export};
 use crate::binary::{ExportDesc, FuncType, ImportDesc, Instr, Module};
 use crate::binary::{Expr, ValType};
-use crate::binary::{Global, GlobalType};
 use core::fmt::Debug;
 
 pub type Addr = usize;
@@ -47,157 +44,6 @@ impl Instance {
             Block::Empty => 0,
             Block::ValType(_) => 1,
             Block::TypeIdx(idx) => self.types[*idx as usize].1 .0.len(),
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub enum FuncInst {
-    InnerFunc {
-        instance_addr: Addr,
-        start: usize,
-        functype: FuncType,
-        locals: Vec<ValType>,
-    },
-    HostFunc {
-        functype: FuncType,
-        name: String,
-    },
-}
-
-impl FuncInst {
-    pub fn functype(&self) -> &FuncType {
-        match self {
-            FuncInst::InnerFunc { functype, .. } | FuncInst::HostFunc { functype, .. } => functype,
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct GlobalInst {
-    pub globaltype: GlobalType,
-    pub value: Value,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct TableInst {
-    pub tabletype: Table,
-    pub elem: Vec<Ref>,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct ElemInst {
-    pub reftype: RefType,
-    pub elem: Vec<Ref>,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct MemInst {
-    pub limits: Limits,
-    pub data: Vec<u8>,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct DataInst {
-    pub data: Vec<u8>,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct Store {
-    pub funcs: Vec<FuncInst>,
-    pub globals: Vec<GlobalInst>,
-    pub tables: Vec<TableInst>,
-    pub elems: Vec<ElemInst>,
-    pub mems: Vec<MemInst>,
-    pub datas: Vec<DataInst>,
-}
-
-impl Store {
-    pub fn new() -> Self {
-        Self {
-            funcs: vec![],
-            globals: vec![],
-            tables: vec![],
-            elems: vec![],
-            mems: vec![],
-            datas: vec![],
-        }
-    }
-
-    pub fn update_func_inst(&mut self, funcaddrs: Vec<Addr>, instance_addr: Addr) {
-        for funcaddr in funcaddrs {
-            match &mut self.funcs[funcaddr as usize] {
-                FuncInst::InnerFunc {
-                    instance_addr: addr,
-                    ..
-                } => {
-                    *addr = instance_addr;
-                }
-                _ => {}
-            }
-        }
-    }
-
-    pub fn allocate_env_func(&mut self, functype: FuncType, name: String) -> Addr {
-        self.funcs.push(FuncInst::HostFunc { functype, name });
-        self.funcs.len() - 1
-    }
-
-    pub fn allocate_global(&mut self, global: Global) -> Result<Addr, RuntimeError> {
-        self.globals.push(GlobalInst {
-            globaltype: global.type_,
-            value: eval_const(&global.value)?,
-        });
-        Ok(self.globals.len() - 1)
-    }
-
-    pub fn allocate_table(&mut self, table: Table) -> Addr {
-        let min = table.limits.min() as usize;
-        self.tables.push(TableInst {
-            tabletype: table,
-            elem: vec![Ref::Null; min],
-        });
-        self.tables.len() - 1
-    }
-
-    pub fn allocate_elem(&mut self, elem: Elem) -> Result<Option<Addr>, RuntimeError> {
-        match &elem.mode {
-            ElemMode::Passiv => {
-                elem_passiv(&mut self.elems, elem)?;
-                Ok(Some(self.elems.len() - 1))
-            }
-            ElemMode::Active { tableidx, offset } => {
-                let offset = match eval_const(&offset)? {
-                    Value::I32(v) => v,
-                    _ => unreachable!(),
-                } as usize;
-                elem_active(&mut self.tables[*tableidx as usize], offset, elem)?;
-                Ok(None)
-            }
-            ElemMode::Declarative => Ok(None),
-        }
-    }
-
-    pub fn allocate_mem(&mut self, mem: &Memory) -> Addr {
-        let min = mem.0.min() as usize;
-        self.mems.push(MemInst {
-            limits: mem.0.clone(),
-            data: vec![0; min * PAGE_SIZE],
-        });
-        self.mems.len() - 1
-    }
-
-    pub fn allocate_data(&mut self, data: Data) -> Result<Option<Addr>, RuntimeError> {
-        match &data.mode {
-            DataMode::Passive => Ok(Some(data_passiv(&mut self.datas, data))),
-            DataMode::Active { memidx, offset } => {
-                let offset = match eval_const(&offset)? {
-                    Value::I32(v) => v,
-                    _ => unreachable!(),
-                } as usize;
-                data_active(&mut self.mems[*memidx as usize], data, offset);
-                Ok(None)
-            }
         }
     }
 }
@@ -859,7 +705,7 @@ mod tests {
                 &mut self,
                 name: &str,
                 params: Vec<Value>,
-                memory: Option<&mut crate::exec::runtime::MemInst>,
+                memory: Option<&mut crate::exec::store::MemInst>,
             ) -> Result<Vec<Value>, crate::exec::env::EnvError> {
                 if name == "print" {
                     let offset = i32::from(params[0]) as usize;

@@ -1,7 +1,7 @@
 #[cfg(not(feature = "std"))]
 use crate::lib::*;
 
-use super::runtime::MemInst;
+use super::store::MemInst;
 use super::value::Value;
 
 #[derive(Debug, PartialEq, Eq)]
