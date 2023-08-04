@@ -1,7 +1,7 @@
 use std::{env, fs::File, io::Read};
 
 use wasp::{
-    exec::{runtime::debug_runtime, stack::Value},
+    exec::{runtime::debug_runtime, value::Value},
     loader::parser::Parser,
 };
 

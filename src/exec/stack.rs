@@ -1,103 +1,7 @@
 #[cfg(not(feature = "std"))]
 use crate::lib::*;
 
-use super::{runtime::Addr, trap::Trap};
-
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum Value {
-    I32(i32),
-    I64(i64),
-    F32(f32),
-    F64(f64),
-    Ref(Ref),
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum Ref {
-    Null,
-    Func(Addr),
-    Extern(Addr),
-}
-
-impl From<Value> for Ref {
-    fn from(value: Value) -> Self {
-        if let Value::Ref(value) = value {
-            value
-        } else {
-            unreachable!()
-        }
-    }
-}
-
-impl Into<Value> for Ref {
-    fn into(self) -> Value {
-        Value::Ref(self)
-    }
-}
-
-impl From<Value> for i32 {
-    fn from(value: Value) -> Self {
-        if let Value::I32(value) = value {
-            value
-        } else {
-            unreachable!()
-        }
-    }
-}
-
-impl Into<Value> for i32 {
-    fn into(self) -> Value {
-        Value::I32(self)
-    }
-}
-
-impl From<Value> for i64 {
-    fn from(value: Value) -> Self {
-        if let Value::I64(value) = value {
-            value
-        } else {
-            unreachable!("{:?}", value)
-        }
-    }
-}
-
-impl Into<Value> for i64 {
-    fn into(self) -> Value {
-        Value::I64(self)
-    }
-}
-
-impl From<Value> for f32 {
-    fn from(value: Value) -> Self {
-        if let Value::F32(value) = value {
-            value
-        } else {
-            unreachable!()
-        }
-    }
-}
-
-impl Into<Value> for f32 {
-    fn into(self) -> Value {
-        Value::F32(self)
-    }
-}
-
-impl From<Value> for f64 {
-    fn from(value: Value) -> Self {
-        if let Value::F64(value) = value {
-            value
-        } else {
-            unreachable!()
-        }
-    }
-}
-
-impl Into<Value> for f64 {
-    fn into(self) -> Value {
-        Value::F64(self)
-    }
-}
+use super::{runtime::Addr, trap::Trap, value::Value};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Label {
@@ -117,7 +21,7 @@ pub struct Frame {
 #[derive(Debug, PartialEq, Default, Clone)]
 pub struct Stack {
     values: Vec<Value>,
-    pub labels: Vec<Label>,
+    labels: Vec<Label>,
     frames: Vec<Frame>,
 }
 

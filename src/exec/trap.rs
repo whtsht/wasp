@@ -11,6 +11,7 @@ pub enum Trap {
     OutOfRange,
     TableOutOfRange,
     TableNullRef,
+    MemoryOutOfRange,
     NotFundRef,
     NotImplemented(String),
     FuncTypeNotMatch(FuncType, FuncType),
@@ -25,6 +26,7 @@ impl core::fmt::Display for Trap {
             Trap::OutOfRange => writeln!(f, "failed to convert number: out of range"),
             Trap::TableOutOfRange => writeln!(f, "failed to refer to table: out of range"),
             Trap::TableNullRef => writeln!(f, "failed to refer to table: null reference"),
+            Trap::MemoryOutOfRange => writeln!(f, "failed to reference memory: out of range"),
             Trap::NotFundRef => writeln!(f, "attempted to call null or external reference"),
             Trap::FuncTypeNotMatch(expected, found) => writeln!(
                 f,

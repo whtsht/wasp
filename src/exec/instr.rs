@@ -1,9 +1,10 @@
-use super::cast;
 use super::env::Env;
-use super::runtime::{FuncInst, Instance, Store};
-use super::stack::{Frame, Label, Ref, Stack, Value};
+use super::runtime::{FuncInst, Instance, MemInst, Store};
+use super::stack::{Frame, Label, Stack};
 use super::table::*;
 use super::trap::Trap;
+use super::value::{Ref, Value};
+use super::{cast, memory};
 use crate::binary::Instr;
 use crate::binary::ValType;
 use core::fmt::Debug;
@@ -101,7 +102,13 @@ pub fn step<E: Env + Debug>(
         }
         Instr::Call(a) => {
             let func = &store.funcs[*a as usize];
-            if let Some(pc) = invoke(func, stack, &frame, env, pc)? {
+            if let Some(pc) = invoke(
+                func,
+                stack,
+                instance.memaddr.map(|a| &mut store.mems[a]),
+                env,
+                pc,
+            )? {
                 return Ok(Some(pc));
             }
         }
@@ -119,7 +126,13 @@ pub fn step<E: Env + Debug>(
                 if func.functype() != ft {
                     return Err(Trap::FuncTypeNotMatch(ft.clone(), func.functype().clone()));
                 }
-                if let Some(pc) = invoke(func, stack, &frame, env, pc)? {
+                if let Some(pc) = invoke(
+                    func,
+                    stack,
+                    instance.memaddr.map(|a| &mut store.mems[a]),
+                    env,
+                    pc,
+                )? {
                     return Ok(Some(pc));
                 }
             } else {
@@ -201,35 +214,35 @@ pub fn step<E: Env + Debug>(
         /////////////////////////
         // Memory Instructions //
         /////////////////////////
-        Instr::I32Load(_) => todo!(),
-        Instr::I64Load(_) => todo!(),
-        Instr::F32Load(_) => todo!(),
-        Instr::F64Load(_) => todo!(),
-        Instr::I32Load8S(_) => todo!(),
-        Instr::I32Load8U(_) => todo!(),
-        Instr::I32Load16S(_) => todo!(),
-        Instr::I32Load16U(_) => todo!(),
-        Instr::I64Load8S(_) => todo!(),
-        Instr::I64Load8U(_) => todo!(),
-        Instr::I64Load16S(_) => todo!(),
-        Instr::I64Load16U(_) => todo!(),
-        Instr::I64Load32S(_) => todo!(),
-        Instr::I64Load32U(_) => todo!(),
-        Instr::I32Store(_) => todo!(),
-        Instr::I64Store(_) => todo!(),
-        Instr::F32Store(_) => todo!(),
-        Instr::F64Store(_) => todo!(),
-        Instr::I32Store8(_) => todo!(),
-        Instr::I32Store16(_) => todo!(),
-        Instr::I64Store8(_) => todo!(),
-        Instr::I64Store16(_) => todo!(),
-        Instr::I64Store32(_) => todo!(),
-        Instr::MemorySize => todo!(),
-        Instr::MemoryGrow => todo!(),
-        Instr::MemoryInit(_) => todo!(),
-        Instr::DataDrop(_) => todo!(),
-        Instr::MemoryCopy => todo!(),
-        Instr::MemoryFill => todo!(),
+        Instr::I32Load(memarg) => memory::i32_load(memarg, instance, store, stack)?,
+        Instr::I64Load(memarg) => memory::i64_load(memarg, instance, store, stack)?,
+        Instr::F32Load(memarg) => memory::f32_load(memarg, instance, store, stack)?,
+        Instr::F64Load(memarg) => memory::f64_load(memarg, instance, store, stack)?,
+        Instr::I32Load8S(memarg) => memory::i32_load_8s(memarg, instance, store, stack)?,
+        Instr::I32Load8U(memarg) => memory::i32_load_8u(memarg, instance, store, stack)?,
+        Instr::I32Load16S(memarg) => memory::i32_load_16s(memarg, instance, store, stack)?,
+        Instr::I32Load16U(memarg) => memory::i32_load_16u(memarg, instance, store, stack)?,
+        Instr::I64Load8S(memarg) => memory::i64_load_8s(memarg, instance, store, stack)?,
+        Instr::I64Load8U(memarg) => memory::i64_load_8u(memarg, instance, store, stack)?,
+        Instr::I64Load16S(memarg) => memory::i64_load_16s(memarg, instance, store, stack)?,
+        Instr::I64Load16U(memarg) => memory::i64_load_16u(memarg, instance, store, stack)?,
+        Instr::I64Load32S(memarg) => memory::i64_load_32s(memarg, instance, store, stack)?,
+        Instr::I64Load32U(memarg) => memory::i64_load_32u(memarg, instance, store, stack)?,
+        Instr::I32Store(memarg) => memory::i32_store(memarg, instance, store, stack)?,
+        Instr::I64Store(memarg) => memory::i64_store(memarg, instance, store, stack)?,
+        Instr::F32Store(memarg) => memory::f32_store(memarg, instance, store, stack)?,
+        Instr::F64Store(memarg) => memory::f64_store(memarg, instance, store, stack)?,
+        Instr::I32Store8(memarg) => memory::i32_store_8(memarg, instance, store, stack)?,
+        Instr::I32Store16(memarg) => memory::i32_store_16(memarg, instance, store, stack)?,
+        Instr::I64Store8(memarg) => memory::i64_store_8(memarg, instance, store, stack)?,
+        Instr::I64Store16(memarg) => memory::i64_store_16(memarg, instance, store, stack)?,
+        Instr::I64Store32(memarg) => memory::i64_store_32(memarg, instance, store, stack)?,
+        Instr::MemorySize => memory::memory_size(instance, store, stack),
+        Instr::MemoryGrow => memory::memory_grow(instance, store, stack),
+        Instr::MemoryInit(x) => memory::memory_init(x, instance, store, stack)?,
+        Instr::DataDrop(x) => memory::data_drop(x, instance, store),
+        Instr::MemoryCopy => memory::memory_copy(instance, store, stack)?,
+        Instr::MemoryFill => memory::memory_fill(instance, store, stack)?,
 
         //////////////////////////
         // Numeric Instructions //
@@ -512,7 +525,7 @@ pub fn step<E: Env + Debug>(
 pub fn invoke<E: Env>(
     func: &FuncInst,
     stack: &mut Stack,
-    frame: &Frame,
+    memory: Option<&mut MemInst>,
     env: &mut E,
     pc: usize,
 ) -> Result<Option<usize>, Trap> {
@@ -522,14 +535,9 @@ pub fn invoke<E: Env>(
             for _ in 0..functype.0 .0.len() {
                 local.push(stack.pop_value());
             }
-            let new_frame = Frame {
-                n: functype.1 .0.len(),
-                instance_addr: frame.instance_addr,
-                local,
-                pc: pc + 1,
-            };
+            local.reverse();
             let results = env
-                .call(name.as_str(), new_frame)
+                .call(name.as_str(), local, memory)
                 .map_err(|err| Trap::Env(err))?;
             for result in results {
                 stack.push_value(result);
@@ -575,8 +583,9 @@ mod tests {
         exec::{
             env::DebugEnv,
             runtime::{Instance, Store},
-            stack::{Frame, Stack, Value},
+            stack::{Frame, Stack},
             trap::Trap,
+            value::Value,
         },
     };
 

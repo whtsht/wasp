@@ -1,7 +1,8 @@
 #[cfg(not(feature = "std"))]
 use crate::lib::*;
 
-use super::stack::{Frame, Value};
+use super::runtime::MemInst;
+use super::value::Value;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum EnvError {
@@ -9,7 +10,12 @@ pub enum EnvError {
 }
 
 pub trait Env {
-    fn call(&mut self, name: &str, frame: Frame) -> Result<Vec<Value>, EnvError>;
+    fn call(
+        &mut self,
+        name: &str,
+        params: Vec<Value>,
+        memory: Option<&mut MemInst>,
+    ) -> Result<Vec<Value>, EnvError>;
 }
 
 #[derive(Debug)]
@@ -18,13 +24,18 @@ pub struct DebugEnv {}
 
 #[cfg(feature = "std")]
 impl Env for DebugEnv {
-    fn call(&mut self, name: &str, frame: Frame) -> Result<Vec<Value>, EnvError> {
+    fn call(
+        &mut self,
+        name: &str,
+        params: Vec<Value>,
+        _memory: Option<&mut MemInst>,
+    ) -> Result<Vec<Value>, EnvError> {
         match name {
             "start" => {
                 println!("hello world");
             }
             "print" => {
-                println!("{:?}", frame.local[0]);
+                println!("{:?}", params[0]);
             }
             _ => return Err(EnvError::NotFound),
         }

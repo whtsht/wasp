@@ -297,7 +297,7 @@ impl<'a> Parser<'a> {
                 let init = self.vec(|p| p.byte().ok_or(Error::Expected(format!("byte"))))?;
                 Ok(Data {
                     init,
-                    mode: DataMode::Active { memory: 0, offset },
+                    mode: DataMode::Active { memidx: 0, offset },
                 })
             }
             Some(1) => {
@@ -313,7 +313,10 @@ impl<'a> Parser<'a> {
                 let init = self.vec(|p| p.byte().ok_or(Error::Expected(format!("byte"))))?;
                 Ok(Data {
                     init,
-                    mode: DataMode::Active { memory, offset },
+                    mode: DataMode::Active {
+                        memidx: memory,
+                        offset,
+                    },
                 })
             }
             _ => unreachable!(),
@@ -673,7 +676,7 @@ mod tests {
                 value: vec![Data {
                     init: vec![b'H', b'e', b'l', b'l', b'o'],
                     mode: DataMode::Active {
-                        memory: 0,
+                        memidx: 0,
                         offset: Expr::new(vec![Instr::I32Const(0)]),
                     },
                 },],

@@ -4,10 +4,12 @@ use crate::lib::*;
 use super::env::{Env, EnvError};
 use super::importer::Importer;
 use super::instr::step;
-use super::stack::{Frame, Ref, Stack, Value};
+use super::memory::{data_active, data_passiv};
+use super::stack::{Frame, Stack};
 use super::table::{elem_active, elem_passiv};
 use super::trap::Trap;
-use crate::binary::{Block, Elem, Export, Table};
+use super::value::{Ref, Value};
+use crate::binary::{Block, Data, DataMode, Elem, Export, Limits, Memory, Table};
 use crate::binary::{ElemMode, RefType};
 use crate::binary::{ExportDesc, FuncType, ImportDesc, Instr, Module};
 use crate::binary::{Expr, ValType};
@@ -15,6 +17,7 @@ use crate::binary::{Global, GlobalType};
 use core::fmt::Debug;
 
 pub type Addr = usize;
+pub const PAGE_SIZE: usize = 65536;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ExecState {
@@ -25,10 +28,15 @@ pub enum ExecState {
 #[derive(Debug, PartialEq, Default, Clone)]
 pub struct Instance {
     pub funcaddrs: Vec<Addr>,
+    pub types: Vec<FuncType>,
     pub globaladdrs: Vec<Addr>,
     pub tableaddrs: Vec<Addr>,
     pub elemaddrs: Vec<Addr>,
-    pub types: Vec<FuncType>,
+    // In the current version of WebAssembly, all memory instructions
+    // implicitly operate on memory index 0. This restriction may be
+    // lifted in future versions.
+    pub memaddr: Option<Addr>,
+    pub dataaddrs: Vec<Addr>,
     pub start: Option<usize>,
     pub exports: Vec<Export>,
 }
@@ -84,11 +92,24 @@ pub struct ElemInst {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub struct MemInst {
+    pub limits: Limits,
+    pub data: Vec<u8>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct DataInst {
+    pub data: Vec<u8>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct Store {
     pub funcs: Vec<FuncInst>,
     pub globals: Vec<GlobalInst>,
     pub tables: Vec<TableInst>,
     pub elems: Vec<ElemInst>,
+    pub mems: Vec<MemInst>,
+    pub datas: Vec<DataInst>,
 }
 
 impl Store {
@@ -98,6 +119,8 @@ impl Store {
             globals: vec![],
             tables: vec![],
             elems: vec![],
+            mems: vec![],
+            datas: vec![],
         }
     }
 
@@ -152,6 +175,29 @@ impl Store {
                 Ok(None)
             }
             ElemMode::Declarative => Ok(None),
+        }
+    }
+
+    pub fn allocate_mem(&mut self, mem: &Memory) -> Addr {
+        let min = mem.0.min() as usize;
+        self.mems.push(MemInst {
+            limits: mem.0.clone(),
+            data: vec![0; min * PAGE_SIZE],
+        });
+        self.mems.len() - 1
+    }
+
+    pub fn allocate_data(&mut self, data: Data) -> Result<Option<Addr>, RuntimeError> {
+        match &data.mode {
+            DataMode::Passive => Ok(Some(data_passiv(&mut self.datas, data))),
+            DataMode::Active { memidx, offset } => {
+                let offset = match eval_const(&offset)? {
+                    Value::I32(v) => v,
+                    _ => unreachable!(),
+                } as usize;
+                data_active(&mut self.mems[*memidx as usize], data, offset);
+                Ok(None)
+            }
         }
     }
 }
@@ -306,16 +352,30 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
             inner_funcaddr.push(addr);
             funcaddrs.push(addr);
         }
-
         let instance_addr = self.instances.len();
         self.store.update_func_inst(inner_funcaddr, instance_addr);
 
+        let memaddr = if module.mems.len() > 0 {
+            Some(self.store.allocate_mem(&module.mems[0]))
+        } else {
+            None
+        };
+
+        let mut dataaddrs = vec![];
+        for data in module.datas {
+            if let Some(addr) = self.store.allocate_data(data)? {
+                dataaddrs.push(addr);
+            }
+        }
+
         Ok(Instance {
             funcaddrs,
+            types: module.types,
             globaladdrs,
             tableaddrs,
             elemaddrs,
-            types: module.types,
+            memaddr,
+            dataaddrs,
             start: module.start.map(|idx| idx as usize),
             exports: module.exports,
         })
@@ -347,18 +407,19 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
     }
 
     pub fn start(&mut self) -> Result<(), RuntimeError> {
-        if let Some(index) = self.instances[self.root].start {
+        let instance = &self.instances[self.root];
+        if let Some(index) = instance.start {
             match self.store.funcs[index].clone() {
                 FuncInst::HostFunc { name, .. } => {
-                    let frame = Frame {
-                        n: 0,
-                        instance_addr: self.root,
-                        local: vec![],
-                        pc: 0,
-                    };
-                    self.env
-                        .call(&name, frame)
-                        .map_err(|err| RuntimeError::Env(err))?;
+                    if let Some(a) = instance.memaddr {
+                        self.env
+                            .call(&name, vec![], Some(&mut self.store.mems[a]))
+                            .map_err(|err| RuntimeError::Env(err))?;
+                    } else {
+                        self.env
+                            .call(&name, vec![], None)
+                            .map_err(|err| RuntimeError::Env(err))?;
+                    }
                 }
                 FuncInst::InnerFunc { start, .. } => {
                     let frame = Frame {
@@ -377,7 +438,8 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
     }
 
     pub fn invoke(&mut self, name: &str, params: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
-        if let Some(export) = self.instances[self.root]
+        let instance = &self.instances[self.root];
+        if let Some(export) = instance
             .exports
             .iter()
             .filter(|export| &export.name == name)
@@ -385,21 +447,16 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
         {
             match export.desc {
                 ExportDesc::Func(index) => {
-                    let results = match self.store.funcs
-                        [self.instances[self.root].funcaddrs[index as usize]]
-                        .clone()
+                    let results = match self.store.funcs[instance.funcaddrs[index as usize]].clone()
                     {
-                        FuncInst::HostFunc { name, .. } => {
-                            let frame = Frame {
-                                n: 0,
-                                instance_addr: self.root,
-                                local: vec![],
-                                pc: 0,
-                            };
-                            self.env
-                                .call(&name, frame)
-                                .map_err(|err| RuntimeError::Env(err))?
-                        }
+                        FuncInst::HostFunc { name, .. } => self
+                            .env
+                            .call(
+                                &name,
+                                vec![],
+                                instance.memaddr.map(|a| &mut self.store.mems[a]),
+                            )
+                            .map_err(|err| RuntimeError::Env(err))?,
                         FuncInst::InnerFunc {
                             start, functype, ..
                         } => {
@@ -451,10 +508,10 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
 #[cfg(test)]
 mod tests {
     use super::Runtime;
-    use crate::exec::env::DebugEnv;
+    use crate::exec::env::{DebugEnv, Env};
     use crate::exec::importer::DefaultImporter;
     use crate::exec::runtime::debug_runtime;
-    use crate::exec::stack::Value;
+    use crate::exec::value::Value;
     use crate::loader::parser::Parser;
     use crate::tests::wat2wasm;
 
@@ -772,5 +829,49 @@ mod tests {
             runtime.invoke("main", vec![]),
             Ok(vec![Value::I32(13), Value::I32(42)])
         );
+    }
+
+    #[test]
+    fn memory() {
+        let wasm = wat2wasm(
+            r#"(module
+                    ;; print(offset, length)
+                    (import "env" "print" (func $print (param i32 i32)))
+                    (memory 1)
+                    (export "memory" (memory 0))
+                    (data (i32.const 0) "hello world\n")
+                    (func (export "main")
+                        (call $print
+                            (i32.const 0)
+                            (i32.const 12)
+                        )
+                    )
+            )"#,
+        )
+        .unwrap();
+
+        let mut parser = Parser::new(&wasm);
+        let module = parser.module().unwrap();
+        #[derive(Debug)]
+        struct TestEnv {}
+        impl Env for TestEnv {
+            fn call(
+                &mut self,
+                name: &str,
+                params: Vec<Value>,
+                memory: Option<&mut crate::exec::runtime::MemInst>,
+            ) -> Result<Vec<Value>, crate::exec::env::EnvError> {
+                if name == "print" {
+                    let offset = i32::from(params[0]) as usize;
+                    let length = i32::from(params[1]) as usize;
+                    let memory = memory.as_ref().unwrap();
+                    assert_eq!(&memory.data[offset..(offset + length)], b"hello world\n");
+                }
+                Ok(vec![])
+            }
+        }
+        let mut runtime = Runtime::new(DefaultImporter::new(), TestEnv {}, "env", module).unwrap();
+
+        assert_eq!(runtime.invoke("main", vec![]), Ok(vec![]));
     }
 }

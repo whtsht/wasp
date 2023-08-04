@@ -102,7 +102,7 @@ pub struct Data {
 #[derive(Debug, PartialEq, Clone)]
 pub enum DataMode {
     Passive,
-    Active { memory: MemIdx, offset: Expr },
+    Active { memidx: MemIdx, offset: Expr },
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -188,7 +188,7 @@ pub struct Module {
     pub mems: Vec<Memory>,
     pub globals: Vec<Global>,
     pub elems: Vec<Elem>,
-    pub data: Vec<Data>,
+    pub datas: Vec<Data>,
     pub start: Option<FuncIdx>,
     pub imports: Vec<Import>,
     pub exports: Vec<Export>,

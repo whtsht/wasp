@@ -4,8 +4,9 @@ use crate::lib::*;
 
 use super::{
     runtime::{eval_const, Addr, ElemInst, Instance, RuntimeError, Store, TableInst},
-    stack::{Ref, Stack, Value},
+    stack::Stack,
     trap::Trap,
+    value::{Ref, Value},
 };
 
 pub fn table_get(
@@ -45,17 +46,17 @@ pub fn table_grow(x: &u32, instance: &mut Instance, store: &mut Store, stack: &m
     let a = instance.tableaddrs[*x as usize];
     let tab = &mut store.tables[a];
     let sz = tab.elem.len() as i32;
-    let err: i32 = -1;
+    const ERR: i32 = -1;
     let n = stack.pop_value::<i32>();
     let init = stack.pop_value::<Ref>();
     let len = n as u64 + tab.elem.len() as u64;
     if len > u32::MAX as u64 {
-        stack.push_value(err);
+        stack.push_value(ERR);
         return;
     }
     let limits_ = tab.tabletype.limits.set_min(len as u32);
     if !limits_.valid() {
-        stack.push_value(err);
+        stack.push_value(ERR);
         return;
     }
     for _ in tab.tabletype.limits.min()..limits_.min() {
@@ -149,7 +150,7 @@ pub fn table_init_manual(tab: &mut TableInst, offset: usize, elems: &Vec<Ref>) {
 pub fn elem_drop(x: &u32, instance: &mut Instance, store: &mut Store) {
     let a = instance.elemaddrs[*x as usize];
     // TODO
-    // drop store.elems
+    // drop store.elems[a]
     let _ = &store.elems[a];
 }
 
