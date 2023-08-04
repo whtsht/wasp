@@ -26,8 +26,6 @@ pub enum ValType {
     I64,
     F32,
     F64,
-    // TODO
-    // Vector instruction
     FuncRef,
     ExternRef,
 }
@@ -59,6 +57,35 @@ pub struct ResultType(pub Vec<ValType>);
 pub enum Limits {
     Min(u32),
     MinMax(u32, u32),
+}
+
+impl Limits {
+    pub fn set_min(&self, min: u32) -> Self {
+        match self {
+            Limits::Min(_) => Limits::Min(min),
+            Limits::MinMax(_, m) => Limits::MinMax(min, *m),
+        }
+    }
+    pub fn min(&self) -> u32 {
+        match self {
+            Limits::Min(v) => *v,
+            Limits::MinMax(v, _) => *v,
+        }
+    }
+
+    pub fn max(&self) -> Option<u32> {
+        match self {
+            Limits::Min(_) => None,
+            Limits::MinMax(_, v) => Some(*v),
+        }
+    }
+
+    pub fn valid(&self) -> bool {
+        match self {
+            Limits::Min(_) => true,
+            Limits::MinMax(n, m) => n <= m,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]

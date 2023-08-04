@@ -55,7 +55,7 @@ pub struct Elem {
 #[derive(Debug, PartialEq, Clone)]
 pub enum ElemMode {
     Passiv,
-    Active { table: TableIdx, offset: Expr },
+    Active { tableidx: TableIdx, offset: Expr },
     Declarative,
 }
 

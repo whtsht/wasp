@@ -9,9 +9,30 @@ pub enum Value {
     I64(i64),
     F32(f32),
     F64(f64),
-    NullRef,
-    FuncRef(Addr),
-    ExternRef(Addr),
+    Ref(Ref),
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Ref {
+    Null,
+    Func(Addr),
+    Extern(Addr),
+}
+
+impl From<Value> for Ref {
+    fn from(value: Value) -> Self {
+        if let Value::Ref(value) = value {
+            value
+        } else {
+            unreachable!()
+        }
+    }
+}
+
+impl Into<Value> for Ref {
+    fn into(self) -> Value {
+        Value::Ref(self)
+    }
 }
 
 impl From<Value> for i32 {

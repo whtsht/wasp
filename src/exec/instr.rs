@@ -1,7 +1,8 @@
 use super::cast;
 use super::env::Env;
 use super::runtime::{FuncInst, Instance, Store};
-use super::stack::{Frame, Label, Stack, Value};
+use super::stack::{Frame, Label, Ref, Stack, Value};
+use super::table::*;
 use super::trap::Trap;
 use crate::binary::Instr;
 use crate::binary::ValType;
@@ -99,72 +100,47 @@ pub fn step<E: Env + Debug>(
             }
         }
         Instr::Call(a) => {
-            let func = store.funcs[*a as usize].clone();
-            match func {
-                FuncInst::HostFunc { name, functype } => {
-                    let mut local = vec![];
-                    for _ in 0..functype.0 .0.len() {
-                        local.push(stack.pop_value());
-                    }
-                    let new_frame = Frame {
-                        n: functype.1 .0.len(),
-                        instance_addr: frame.instance_addr,
-                        local,
-                        pc: pc + 1,
-                    };
-                    let results = env
-                        .call(name.as_str(), new_frame)
-                        .map_err(|err| Trap::Env(err))?;
-                    for result in results {
-                        stack.push_value(result);
-                    }
-                }
-                FuncInst::InnerFunc {
-                    instance_addr,
-                    functype,
-                    locals,
-                    start,
-                } => {
-                    let mut local = vec![];
-                    for _ in 0..functype.0 .0.len() {
-                        local.push(stack.pop_value());
-                    }
-                    for val in locals.iter() {
-                        match val {
-                            ValType::I32 => local.push(Value::I32(0)),
-                            ValType::I64 => local.push(Value::I64(0)),
-                            ValType::F32 => local.push(Value::F32(0.0)),
-                            ValType::F64 => local.push(Value::F64(0.0)),
-                            _ => todo!(),
-                        }
-                    }
-                    let new_frame = Frame {
-                        n: functype.1 .0.len(),
-                        instance_addr,
-                        local,
-                        pc: pc + 1,
-                    };
-                    stack.push_frame(new_frame);
-                    return Ok(Some(start));
-                }
+            let func = &store.funcs[*a as usize];
+            if let Some(pc) = invoke(func, stack, &frame, env, pc)? {
+                return Ok(Some(pc));
             }
         }
-        Instr::CallIndirect(_, _) => todo!(),
+        Instr::CallIndirect(typeidx, tableidx) => {
+            let ta = instance.tableaddrs[*tableidx as usize];
+            let tab = &store.tables[ta];
+            let ft = &instance.types[*typeidx as usize];
+            let i = stack.pop_value::<i32>() as usize;
+            if i >= tab.elem.len() {
+                return Err(Trap::TableOutOfRange);
+            }
+            let r = tab.elem[i];
+            if let Ref::Func(a) = r {
+                let func = &store.funcs[a];
+                if func.functype() != ft {
+                    return Err(Trap::FuncTypeNotMatch(ft.clone(), func.functype().clone()));
+                }
+                if let Some(pc) = invoke(func, stack, &frame, env, pc)? {
+                    return Ok(Some(pc));
+                }
+            } else {
+                return Err(Trap::NotFundRef);
+            }
+        }
 
         ////////////////////////////
         // Reference Instructions //
         ////////////////////////////
-        Instr::RefNull(_) => stack.push_value(Value::NullRef),
+        Instr::RefNull(_) => stack.push_value(Value::Ref(Ref::Null)),
         Instr::RefIsNull => {
             let c = match stack.pop_value::<Value>() {
-                Value::NullRef => Value::I32(1),
+                Value::Ref(Ref::Null) => Value::I32(1),
                 _ => Value::I32(0),
             };
             stack.push_value(c);
         }
         Instr::RefFunc(x) => {
             let addr = instance.funcaddrs[*x as usize];
-            stack.push_value(Value::FuncRef(addr));
+            stack.push_value(Value::Ref(Ref::Func(addr)));
         }
 
         /////////////////////////////
@@ -213,14 +189,14 @@ pub fn step<E: Env + Debug>(
         ////////////////////////
         // Table Instructions //
         ////////////////////////
-        Instr::TableGet(_) => todo!(),
-        Instr::TableSet(_) => todo!(),
-        Instr::TableInit(_, _) => todo!(),
-        Instr::ElemDrop(_) => todo!(),
-        Instr::TableCopy(_, _) => todo!(),
-        Instr::TableGrow(_) => todo!(),
-        Instr::TableSize(_) => todo!(),
-        Instr::TableFill(_) => todo!(),
+        Instr::TableGet(x) => table_get(x, instance, store, stack)?,
+        Instr::TableSet(x) => table_set(x, instance, store, stack)?,
+        Instr::TableInit(x, y) => table_init(x, y, instance, store, stack)?,
+        Instr::TableCopy(x, y) => table_copy(x, y, instance, store, stack)?,
+        Instr::TableGrow(x) => table_grow(x, instance, store, stack),
+        Instr::TableSize(x) => table_size(x, instance, store, stack),
+        Instr::TableFill(x) => table_fill(x, instance, store, stack)?,
+        Instr::ElemDrop(x) => elem_drop(x, instance, store),
 
         /////////////////////////
         // Memory Instructions //
@@ -531,6 +507,64 @@ pub fn step<E: Env + Debug>(
         Instr::I64TruncSatF64U => stack.cvtop(|v: f64| cast::f64_to_u64_sat(v) as i64),
     }
     Ok(Some(pc + 1))
+}
+
+pub fn invoke<E: Env>(
+    func: &FuncInst,
+    stack: &mut Stack,
+    frame: &Frame,
+    env: &mut E,
+    pc: usize,
+) -> Result<Option<usize>, Trap> {
+    match func {
+        FuncInst::HostFunc { name, functype } => {
+            let mut local = vec![];
+            for _ in 0..functype.0 .0.len() {
+                local.push(stack.pop_value());
+            }
+            let new_frame = Frame {
+                n: functype.1 .0.len(),
+                instance_addr: frame.instance_addr,
+                local,
+                pc: pc + 1,
+            };
+            let results = env
+                .call(name.as_str(), new_frame)
+                .map_err(|err| Trap::Env(err))?;
+            for result in results {
+                stack.push_value(result);
+            }
+            Ok(None)
+        }
+        FuncInst::InnerFunc {
+            instance_addr,
+            functype,
+            locals,
+            start,
+        } => {
+            let mut local = vec![];
+            for _ in 0..functype.0 .0.len() {
+                local.push(stack.pop_value());
+            }
+            for val in locals.iter() {
+                match val {
+                    ValType::I32 => local.push(Value::I32(0)),
+                    ValType::I64 => local.push(Value::I64(0)),
+                    ValType::F32 => local.push(Value::F32(0.0)),
+                    ValType::F64 => local.push(Value::F64(0.0)),
+                    _ => todo!(),
+                }
+            }
+            let new_frame = Frame {
+                n: functype.1 .0.len(),
+                instance_addr: *instance_addr,
+                local,
+                pc: pc + 1,
+            };
+            stack.push_frame(new_frame);
+            Ok(Some(*start))
+        }
+    }
 }
 
 #[cfg(test)]

@@ -148,7 +148,10 @@ impl<'a> Parser<'a> {
                 Ok(Elem {
                     type_: RefType::FuncRef,
                     init,
-                    mode: ElemMode::Active { table: 0, offset },
+                    mode: ElemMode::Active {
+                        tableidx: 0,
+                        offset,
+                    },
                 })
             }
             Some(1) => {
@@ -168,7 +171,10 @@ impl<'a> Parser<'a> {
                 Ok(Elem {
                     type_,
                     init,
-                    mode: ElemMode::Active { table, offset },
+                    mode: ElemMode::Active {
+                        tableidx: table,
+                        offset,
+                    },
                 })
             }
             Some(3) => {
@@ -186,7 +192,10 @@ impl<'a> Parser<'a> {
                 Ok(Elem {
                     type_: RefType::FuncRef,
                     init,
-                    mode: ElemMode::Active { table: 0, offset },
+                    mode: ElemMode::Active {
+                        tableidx: 0,
+                        offset,
+                    },
                 })
             }
             Some(5) => {
@@ -206,7 +215,10 @@ impl<'a> Parser<'a> {
                 Ok(Elem {
                     type_,
                     init,
-                    mode: ElemMode::Active { table, offset },
+                    mode: ElemMode::Active {
+                        tableidx: table,
+                        offset,
+                    },
                 })
             }
             Some(7) => {
@@ -581,7 +593,7 @@ mod tests {
                         type_: RefType::FuncRef,
                         init: vec![Expr::new(vec![Instr::RefFunc(0)])],
                         mode: ElemMode::Active {
-                            table: 0,
+                            tableidx: 0,
                             offset: Expr::new(vec![Instr::I32Const(10)])
                         }
                     },
@@ -589,7 +601,7 @@ mod tests {
                         type_: RefType::FuncRef,
                         init: vec![Expr::new(vec![Instr::RefFunc(1)])],
                         mode: ElemMode::Active {
-                            table: 0,
+                            tableidx: 0,
                             offset: Expr::new(vec![Instr::I32Const(20)])
                         }
                     }

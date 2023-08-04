@@ -4,9 +4,11 @@ use crate::lib::*;
 use super::env::{Env, EnvError};
 use super::importer::Importer;
 use super::instr::step;
-use super::stack::{Frame, Stack, Value};
+use super::stack::{Frame, Ref, Stack, Value};
+use super::table::{elem_active, elem_passiv};
 use super::trap::Trap;
-use crate::binary::{Block, Export};
+use crate::binary::{Block, Elem, Export, Table};
+use crate::binary::{ElemMode, RefType};
 use crate::binary::{ExportDesc, FuncType, ImportDesc, Instr, Module};
 use crate::binary::{Expr, ValType};
 use crate::binary::{Global, GlobalType};
@@ -24,6 +26,8 @@ pub enum ExecState {
 pub struct Instance {
     pub funcaddrs: Vec<Addr>,
     pub globaladdrs: Vec<Addr>,
+    pub tableaddrs: Vec<Addr>,
+    pub elemaddrs: Vec<Addr>,
     pub types: Vec<FuncType>,
     pub start: Option<usize>,
     pub exports: Vec<Export>,
@@ -53,6 +57,14 @@ pub enum FuncInst {
     },
 }
 
+impl FuncInst {
+    pub fn functype(&self) -> &FuncType {
+        match self {
+            FuncInst::InnerFunc { functype, .. } | FuncInst::HostFunc { functype, .. } => functype,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct GlobalInst {
     pub globaltype: GlobalType,
@@ -60,9 +72,23 @@ pub struct GlobalInst {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub struct TableInst {
+    pub tabletype: Table,
+    pub elem: Vec<Ref>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct ElemInst {
+    pub reftype: RefType,
+    pub elem: Vec<Ref>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct Store {
     pub funcs: Vec<FuncInst>,
     pub globals: Vec<GlobalInst>,
+    pub tables: Vec<TableInst>,
+    pub elems: Vec<ElemInst>,
 }
 
 impl Store {
@@ -70,6 +96,8 @@ impl Store {
         Self {
             funcs: vec![],
             globals: vec![],
+            tables: vec![],
+            elems: vec![],
         }
     }
 
@@ -95,9 +123,36 @@ impl Store {
     pub fn allocate_global(&mut self, global: Global) -> Result<Addr, RuntimeError> {
         self.globals.push(GlobalInst {
             globaltype: global.type_,
-            value: eval_const(global.value)?,
+            value: eval_const(&global.value)?,
         });
         Ok(self.globals.len() - 1)
+    }
+
+    pub fn allocate_table(&mut self, table: Table) -> Addr {
+        let min = table.limits.min() as usize;
+        self.tables.push(TableInst {
+            tabletype: table,
+            elem: vec![Ref::Null; min],
+        });
+        self.tables.len() - 1
+    }
+
+    pub fn allocate_elem(&mut self, elem: Elem) -> Result<Option<Addr>, RuntimeError> {
+        match &elem.mode {
+            ElemMode::Passiv => {
+                elem_passiv(&mut self.elems, elem)?;
+                Ok(Some(self.elems.len() - 1))
+            }
+            ElemMode::Active { tableidx, offset } => {
+                let offset = match eval_const(&offset)? {
+                    Value::I32(v) => v,
+                    _ => unreachable!(),
+                } as usize;
+                elem_active(&mut self.tables[*tableidx as usize], offset, elem)?;
+                Ok(None)
+            }
+            ElemMode::Declarative => Ok(None),
+        }
     }
 }
 
@@ -149,12 +204,14 @@ pub fn debug_runtime(module: Module) -> Result<Runtime<DebugEnv, DefaultImporter
     Ok(runtime)
 }
 
-pub fn eval_const(expr: Expr) -> Result<Value, RuntimeError> {
+pub fn eval_const(expr: &Expr) -> Result<Value, RuntimeError> {
     Ok(match expr.0[0] {
         Instr::I32Const(value) => Value::I32(value),
         Instr::I64Const(value) => Value::I64(value),
         Instr::F32Const(value) => Value::F32(value),
         Instr::F64Const(value) => Value::F64(value),
+        Instr::RefNull(_) => Value::Ref(Ref::Null),
+        Instr::RefFunc(idx) => Value::I32(idx as i32),
         _ => return Err(RuntimeError::ConstantExpression),
     })
 }
@@ -230,6 +287,18 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
             globaladdrs.push(self.store.allocate_global(global)?);
         }
 
+        let mut tableaddrs = vec![];
+        for table in module.tables {
+            tableaddrs.push(self.store.allocate_table(table));
+        }
+
+        let mut elemaddrs = vec![];
+        for elem in module.elems {
+            if let Some(addr) = self.store.allocate_elem(elem)? {
+                elemaddrs.push(addr);
+            }
+        }
+
         let mut inner_funcaddr = vec![];
         for func in module.funcs {
             let functype = module.types[func.typeidx as usize].clone();
@@ -244,6 +313,8 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
         Ok(Instance {
             funcaddrs,
             globaladdrs,
+            tableaddrs,
+            elemaddrs,
             types: module.types,
             start: module.start.map(|idx| idx as usize),
             exports: module.exports,
@@ -672,5 +743,34 @@ mod tests {
         let module = parser.module().unwrap();
         let mut runtime = debug_runtime(module).unwrap();
         assert_eq!(runtime.invoke("main", vec![]), Ok(vec![Value::I32(55)]));
+    }
+
+    #[test]
+    fn table() {
+        let wasm = wat2wasm(
+            r#"(module
+                    (table 2 anyfunc)
+                    (func $f1 (result i32) i32.const 42)
+                    (func $f2 (result i32) i32.const 13)
+                    (type $return_i32 (func (result i32)))
+                    (elem (i32.const 0) $f1 $f2)
+
+                    (func (export "main") (result i32 i32)
+                        i32.const 1
+                        call_indirect (type $return_i32)
+                        i32.const 0
+                        call_indirect (type $return_i32)
+                    )
+            )"#,
+        )
+        .unwrap();
+
+        let mut parser = Parser::new(&wasm);
+        let module = parser.module().unwrap();
+        let mut runtime = debug_runtime(module).unwrap();
+        assert_eq!(
+            runtime.invoke("main", vec![]),
+            Ok(vec![Value::I32(13), Value::I32(42)])
+        );
     }
 }
