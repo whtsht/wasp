@@ -9,6 +9,7 @@ use std::{
     path::PathBuf,
     process::Command,
 };
+use wasp::exec::value::LittleEndian;
 use wasp::{
     binary::Module,
     exec::{
@@ -20,7 +21,7 @@ use wasp::{
     loader::parser::Parser,
 };
 
-const WAST_DIR: &str = "./tests/wasts";
+const WAST_DIR: &str = "./spec/test/core";
 const WAST2JSON: &str = "wast2json";
 
 #[test]
@@ -73,13 +74,25 @@ enum Action<'a> {
 
 fn json_to_value(value: &Value) -> WValue {
     let ty = value.get("type").unwrap().as_str().unwrap();
-    let value_str = value.get("value").unwrap().as_str().unwrap();
-    match ty {
-        "i32" => WValue::I32(value_str.parse::<i128>().unwrap() as i32),
-        "i64" => WValue::I64(value_str.parse::<i128>().unwrap() as i64),
-        "f32" => WValue::F32(value_str.parse().unwrap()),
-        "f64" => WValue::F64(value_str.parse().unwrap()),
-        _ => todo!(),
+    let value = value.get("value").unwrap().as_str().unwrap();
+    if value == "nan:canonical" {
+        match ty {
+            "f32" => WValue::F32(f32::NAN),
+            "f64" => WValue::F64(f64::NAN),
+            _ => panic!(),
+        }
+    } else {
+        let value = value.parse::<u64>().unwrap();
+        let mut buf = vec![0u8; 8];
+        LittleEndian::write(&mut buf, 0, value);
+
+        match ty {
+            "i32" => WValue::I32(LittleEndian::read(&buf, 0)),
+            "i64" => WValue::I64(LittleEndian::read(&buf, 0)),
+            "f32" => WValue::F32(LittleEndian::read(&buf, 0)),
+            "f64" => WValue::F64(LittleEndian::read(&buf, 0)),
+            _ => panic!(),
+        }
     }
 }
 
@@ -121,6 +134,32 @@ fn get_module(filename: &str) -> Module {
     parser.module().unwrap()
 }
 
+macro_rules! assert_eq_with_nan {
+    ($left:expr, $right:expr) => {{
+        match (&$left, &$right) {
+            (left_val, right_val) => {
+                if left_val.is_nan() && right_val.is_nan() {
+                    // Both are NaN, consider them equal.
+                } else {
+                    // If one is NaN and the other is not, raise an assertion failure.
+                    assert!(
+                        !left_val.is_nan() && !right_val.is_nan(),
+                        "Assertion failed: `(left == right)` with NaN values: `NaN == {:?}`",
+                        if left_val.is_nan() {
+                            right_val
+                        } else {
+                            left_val
+                        }
+                    );
+
+                    // Regular equality check for non-NaN values.
+                    assert_eq!(left_val, right_val);
+                }
+            }
+        }
+    }};
+}
+
 fn run_test<E: Env + Debug, I: Importer + Debug>(
     runtime: &mut Runtime<E, I>,
     command: &TestCommand,
@@ -142,9 +181,11 @@ fn run_test<E: Env + Debug, I: Importer + Debug>(
 
 pub fn run_tests() {
     let entries = fs::read_dir(WAST_DIR).unwrap();
+
     for entry in entries {
         if let Ok(entry) = entry {
             if entry.path().extension().and_then(|s| s.to_str()) == Some("wast") {
+                info!("{:?}", entry.path());
                 wast2json(&entry.path());
 
                 let mut json = entry.path().clone();

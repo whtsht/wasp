@@ -1,6 +1,6 @@
 use super::runtime::Addr;
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum Value {
     I32(i32),
     I64(i64),
@@ -8,6 +8,31 @@ pub enum Value {
     F64(f64),
     Ref(Ref),
 }
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::I32(a), Value::I32(b)) => a == b,
+            (Value::I64(a), Value::I64(b)) => a == b,
+            (Value::F32(a), Value::F32(b)) => {
+                (a.is_nan() && b.is_nan())
+                    || (a.is_finite() && b.is_finite())
+                    || (a.is_infinite() && b.is_infinite())
+                    || a == b
+            }
+            (Value::F64(a), Value::F64(b)) => {
+                (a.is_nan() && b.is_nan())
+                    || (a.is_finite() && b.is_finite())
+                    || (a.is_infinite() && b.is_infinite())
+                    || a == b
+            }
+            (Value::Ref(a), Value::Ref(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Value {}
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Ref {
@@ -134,6 +159,7 @@ impl_le_rw!(i8);
 impl_le_rw!(i16);
 impl_le_rw!(i32);
 impl_le_rw!(i64);
+impl_le_rw!(u64);
 impl_le_rw!(f32);
 impl_le_rw!(f64);
 
