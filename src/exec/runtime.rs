@@ -147,15 +147,36 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
         };
 
         let instance = runtime.new_instance(module)?;
-
         runtime.instances.push(instance);
-
         runtime.root = runtime.instances.len() - 1;
 
         Ok(runtime)
     }
 
-    pub fn new_instance(&mut self, module: Module) -> Result<Instance, RuntimeError> {
+    pub fn without_module<S: Into<String>>(importer: I, env: E, env_name: S) -> Self {
+        Runtime {
+            root: 0,
+            instrs: vec![],
+            instances: vec![],
+            store: Store::new(),
+            importer,
+            env,
+            env_name: env_name.into(),
+            stack: Stack::new(),
+            pc: 0,
+        }
+    }
+
+    pub fn resister_module(&mut self, module: Module) -> Result<(), RuntimeError> {
+        let instance = self.new_instance(module)?;
+
+        self.instances.push(instance);
+
+        self.root = self.instances.len() - 1;
+        Ok(())
+    }
+
+    fn new_instance(&mut self, module: Module) -> Result<Instance, RuntimeError> {
         let mut funcaddrs = vec![];
 
         for import in module.imports {

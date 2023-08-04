@@ -1,9 +1,6 @@
 use std::{env, fs::File, io::Read};
 
-use wasp::{
-    exec::{runtime::debug_runtime, value::Value},
-    loader::parser::Parser,
-};
+use wasp::{exec::runtime::debug_runtime, loader::parser::Parser};
 
 fn main() {
     let mut args = env::args();
@@ -16,9 +13,12 @@ fn main() {
             .expect("failed to parse module");
 
         let mut runtime = debug_runtime(module).expect("failed to load module");
-        match runtime.invoke("_start", vec![Value::I64(5)]) {
+        match runtime.invoke("_start", vec![]) {
             Ok(_) => {}
             Err(err) => println!("{:?}", err),
         }
+    } else {
+        println!("error: no input files");
+        std::process::exit(1);
     }
 }
