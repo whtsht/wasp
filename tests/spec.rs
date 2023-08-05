@@ -12,12 +12,7 @@ use std::{
 use wasp::exec::value::LittleEndian;
 use wasp::{
     binary::Module,
-    exec::{
-        env::{DebugEnv, Env},
-        importer::{DefaultImporter, Importer},
-        runtime::Runtime,
-        value::Value as WValue,
-    },
+    exec::{env::Env, importer::DefaultImporter, runtime::Runtime, value::Value as WValue},
     loader::parser::Parser,
 };
 

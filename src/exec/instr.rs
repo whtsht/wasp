@@ -8,8 +8,11 @@ use super::value::{Ref, Value};
 use super::{cast, memory};
 use crate::binary::Instr;
 use crate::binary::ValType;
+#[cfg(not(feature = "std"))]
+use crate::lib::*;
 use core::fmt::Debug;
 use core::ops::Neg;
+use num_traits::float::Float;
 
 pub fn step<E: Env + Debug>(
     env: &mut E,
@@ -426,38 +429,38 @@ pub fn step<E: Env + Debug>(
             }
         }),
         // fcopysign_N
-        Instr::F32Copysign => stack.binop(f32::copysign),
-        Instr::F64Copysign => stack.binop(f64::copysign),
+        Instr::F32Copysign => stack.binop(|a: f32, b: f32| Float::copysign(a, b)),
+        Instr::F64Copysign => stack.binop(|a: f64, b: f64| Float::copysign(a, b)),
         // fabs_N
-        Instr::F32Abs => stack.unop(f32::abs),
-        Instr::F64Abs => stack.unop(f64::abs),
+        Instr::F32Abs => stack.unop(|f: f32| Float::abs(f)),
+        Instr::F64Abs => stack.unop(|f: f64| Float::abs(f)),
         // fneg_N
         Instr::F32Neg => stack.unop(f32::neg),
         Instr::F64Neg => stack.unop(f64::neg),
         // fsqrt_N
-        Instr::F32Sqrt => stack.unop(f32::sqrt),
-        Instr::F64Sqrt => stack.unop(f64::sqrt),
+        Instr::F32Sqrt => stack.unop(|f: f32| Float::sqrt(f)),
+        Instr::F64Sqrt => stack.unop(|f: f64| Float::sqrt(f)),
         // fceil_N
-        Instr::F32Ceil => stack.unop(f32::ceil),
-        Instr::F64Ceil => stack.unop(f64::ceil),
+        Instr::F32Ceil => stack.unop(|f: f32| Float::ceil(f)),
+        Instr::F64Ceil => stack.unop(|f: f64| Float::ceil(f)),
         // ffloor_N
-        Instr::F32Floor => stack.unop(f32::floor),
-        Instr::F64Floor => stack.unop(f64::floor),
+        Instr::F32Floor => stack.unop(|f: f32| Float::floor(f)),
+        Instr::F64Floor => stack.unop(|f: f64| Float::floor(f)),
         // ftrunc_N
-        Instr::F32Trunc => stack.unop(f32::trunc),
-        Instr::F64Trunc => stack.unop(f64::trunc),
+        Instr::F32Trunc => stack.unop(|f: f32| Float::trunc(f)),
+        Instr::F64Trunc => stack.unop(|f: f64| Float::trunc(f)),
         // fnearest_N
         Instr::F32Nearest => stack.unop(|v: f32| {
-            let fround = v.round();
-            if (v - fround).abs() == 0.5 && fround % 2.0 != 0.0 {
+            let fround = Float::round(v);
+            if Float::abs(v - fround) == 0.5 && fround % 2.0 != 0.0 {
                 v.trunc()
             } else {
                 fround
             }
         }),
         Instr::F64Nearest => stack.unop(|v: f64| {
-            let fround = v.round();
-            if (v - fround).abs() == 0.5 && fround % 2.0 != 0.0 {
+            let fround = Float::round(v);
+            if Float::abs(v - fround) == 0.5 && fround % 2.0 != 0.0 {
                 v.trunc()
             } else {
                 fround
@@ -554,6 +557,9 @@ pub fn step<E: Env + Debug>(
         Instr::I64TruncSatF64S => stack.cvtop(|v: f64| cast::f64_to_i64_sat(v)),
         Instr::I64TruncSatF64U => stack.cvtop(|v: f64| cast::f64_to_u64_sat(v) as i64),
 
+        //////////////////////////
+        // Pseudo Instructions ///
+        //////////////////////////
         Instr::RJump(r) => return Ok(Some(*r + pc)),
         Instr::PopLabel => {
             stack.pop_label();

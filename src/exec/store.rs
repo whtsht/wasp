@@ -7,6 +7,8 @@ use crate::binary::ValType;
 use crate::binary::{Data, DataMode, Elem, Limits, Memory, Table};
 use crate::binary::{ElemMode, RefType};
 use crate::binary::{Global, GlobalType};
+#[cfg(not(feature = "std"))]
+use crate::lib::*;
 use core::fmt::Debug;
 
 #[derive(Debug, PartialEq, Clone)]

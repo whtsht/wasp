@@ -1,13 +1,14 @@
-use crate::{
-    binary::{Data, MemArg},
-    exec::{runtime::PAGE_SIZE, value::LittleEndian},
-};
-
 use super::{
     runtime::{Addr, Instance},
     stack::Stack,
     store::{DataInst, MemInst, Store},
     trap::Trap,
+};
+#[cfg(not(feature = "std"))]
+use crate::lib::*;
+use crate::{
+    binary::{Data, MemArg},
+    exec::{runtime::PAGE_SIZE, value::LittleEndian},
 };
 
 macro_rules! impl_load {
