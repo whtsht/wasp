@@ -1,3 +1,4 @@
-[submodule "spec"]
-	path = spec
-	url = git@github.com:WebAssembly/spec.git
+
+[submodule "tests/testsuite"]
+	path = tests/testsuite
+	url = git@github.com:WebAssembly/testsuite.git

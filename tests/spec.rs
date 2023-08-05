@@ -21,7 +21,7 @@ use wasp::{
     loader::parser::Parser,
 };
 
-const WAST_DIR: &str = "./spec/test/core";
+const WAST_DIR: &str = "./tests/testsuite";
 const WAST2JSON: &str = "wast2json";
 
 #[test]
