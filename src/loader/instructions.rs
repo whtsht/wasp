@@ -107,7 +107,7 @@ impl<'a> Parser<'a> {
                         instrs.extend(then_instrs.into_iter());
                         Ok(instrs)
                     },
-                )
+                );
             }
             Some(0x0C) => Instr::Br(self.labelidx()?),
             Some(0x0D) => Instr::BrIf(self.labelidx()?),
@@ -347,7 +347,7 @@ impl<'a> Parser<'a> {
                 Ok(17) => Instr::TableFill(self.tableidx()?),
                 _ => unreachable!(),
             },
-            v => panic!("not implemented{:?}", v),
+            v => return Err(Error::Other(format!("not instruction {:?}", v))),
         };
         Ok(vec![instr])
     }

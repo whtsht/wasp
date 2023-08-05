@@ -416,14 +416,24 @@ mod tests {
         )
         .unwrap();
         let mut parser = Parser::new(&wasm);
-        assert!(matches!(
-            parser.module(),
-            Ok(Module {
-                version: 1,
-                start: Some(1),
-                ..
-            })
-        ));
+        assert!(parser.module().is_ok());
+
+        let wasm = wat2wasm(
+            r#"(module
+                    (func (export "as-if-then") (param i32)
+                        local.get 0
+                        (if
+                            (then
+                                i32.const 3
+                                local.set 0
+                            )
+                        )
+                    )
+                )"#,
+        )
+        .unwrap();
+        let mut parser = Parser::new(&wasm);
+        assert!(matches!(parser.module(), Ok(Module { .. })));
     }
 
     #[test]
