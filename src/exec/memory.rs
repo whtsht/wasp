@@ -91,9 +91,9 @@ pub fn memory_grow(instance: &Instance, store: &mut Store, stack: &mut Stack) {
     let a = instance.memaddr.unwrap();
     const ERR: i32 = -1;
     let mem = &mut store.mems[a];
-    let sx = mem.limits.min();
+    let sz = mem.limits.min();
     let n = stack.pop_value::<i32>() as u32;
-    let len = sx + n;
+    let len = sz + n;
     if len > u16::MAX as u32 + 1 {
         stack.push_value(ERR);
         return;
@@ -106,7 +106,8 @@ pub fn memory_grow(instance: &Instance, store: &mut Store, stack: &mut Stack) {
     for _ in 0..(n * PAGE_SIZE as u32) {
         mem.data.push(0);
     }
-    stack.push_value(len as i32);
+    mem.limits = limits_;
+    stack.push_value(sz as i32);
 }
 
 pub fn memory_fill(instance: &Instance, store: &mut Store, stack: &mut Stack) -> Result<(), Trap> {

@@ -61,10 +61,10 @@ pub enum ElemMode {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ImportDesc {
-    TypeIdx(u32),
-    TableType(Table),
-    MemType(Memory),
-    GlobalType(GlobalType),
+    Func(u32),
+    Table(Table),
+    Mem(Memory),
+    Global(GlobalType),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]

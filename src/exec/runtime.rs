@@ -8,7 +8,7 @@ use super::stack::{Frame, Stack};
 use super::store::{FuncInst, Store};
 use super::trap::Trap;
 use super::value::{Ref, Value};
-use crate::binary::{Block, Export};
+use crate::binary::{Block, Export, Import};
 use crate::binary::{ExportDesc, FuncType, ImportDesc, Instr, Module};
 use crate::binary::{Expr, ValType};
 use core::fmt::Debug;
@@ -64,11 +64,18 @@ pub struct Runtime<E: Env + Debug, I: Importer + Debug> {
 #[derive(Debug, PartialEq, Eq)]
 pub enum RuntimeError {
     ModuleNotFound(String),
-    FunctionNotFound(String),
-    NotFunction(String, ExportDesc),
+    NotFound(ImportType),
     Env(EnvError),
     ConstantExpression,
     Trap(Trap),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ImportType {
+    Func(String),
+    Table(String),
+    Global(String),
+    Mem,
 }
 
 #[cfg(feature = "std")]
@@ -178,29 +185,33 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
 
     fn new_instance(&mut self, module: Module) -> Result<Instance, RuntimeError> {
         let mut funcaddrs = vec![];
+        let mut globaladdrs = vec![];
+        let mut tableaddrs = vec![];
+        let mut memaddr = None;
 
         for import in module.imports {
-            match import.desc {
-                ImportDesc::TypeIdx(idx) => {
-                    if import.module == self.env_name {
-                        let addr = self
-                            .store
-                            .allocate_env_func(module.types[idx as usize].clone(), import.name);
-                        funcaddrs.push(addr);
-                    } else {
-                        funcaddrs.push(self.get_func_addr(&import.module, &import.name)?);
-                    }
+            if import.module == self.env_name {
+                match import.desc {
+                    ImportDesc::Func(ty) => funcaddrs
+                        .push(self.import_env_func(module.types[ty as usize].clone(), import.name)),
+                    ImportDesc::Table(_) => {}
+                    ImportDesc::Mem(_) => {}
+                    ImportDesc::Global(_) => {}
                 }
-                _ => {}
+            } else {
+                match import.desc {
+                    ImportDesc::Func(_) => funcaddrs.push(self.import_func(&import)?),
+                    ImportDesc::Mem(_) => memaddr = Some(self.import_memory(&import)?),
+                    ImportDesc::Table(_) => tableaddrs.push(self.import_table(&import)?),
+                    ImportDesc::Global(_) => globaladdrs.push(self.import_global(&import)?),
+                }
             }
         }
 
-        let mut globaladdrs = vec![];
         for global in module.globals {
             globaladdrs.push(self.store.allocate_global(global)?);
         }
 
-        let mut tableaddrs = vec![];
         for table in module.tables {
             tableaddrs.push(self.store.allocate_table(table));
         }
@@ -222,11 +233,9 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
         let instance_addr = self.instances.len();
         self.store.update_func_inst(inner_funcaddr, instance_addr);
 
-        let memaddr = if module.mems.len() > 0 {
-            Some(self.store.allocate_mem(&module.mems[0]))
-        } else {
-            None
-        };
+        if module.mems.len() > 0 {
+            memaddr = Some(self.store.allocate_mem(&module.mems[0]))
+        }
 
         let mut dataaddrs = vec![];
         for data in module.datas {
@@ -248,16 +257,21 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
         })
     }
 
-    pub fn get_func_addr(&mut self, modname: &str, funcname: &str) -> Result<usize, RuntimeError> {
+    pub fn import_env_func(&mut self, functype: FuncType, name: String) -> Addr {
+        self.store.funcs.push(FuncInst::HostFunc { functype, name });
+        self.store.funcs.len() - 1
+    }
+
+    pub fn import_func(&mut self, import: &Import) -> Result<usize, RuntimeError> {
         let module = self
             .importer
-            .import(modname)
-            .ok_or_else(|| RuntimeError::ModuleNotFound(modname.into()))?;
+            .import(&import.module)
+            .ok_or_else(|| RuntimeError::ModuleNotFound(import.module.clone()))?;
         let instance = self.new_instance(module)?;
         if let Some(desc) = instance
             .exports
             .iter()
-            .filter(|export| export.name == funcname)
+            .filter(|export| export.name == import.name)
             .map(|export| &export.desc)
             .next()
         {
@@ -265,12 +279,82 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
                 let ret = Ok(instance.funcaddrs[*index as usize]);
                 self.instances.push(instance);
                 return ret;
-            } else {
-                Err(RuntimeError::NotFunction(funcname.into(), desc.clone()))
             }
-        } else {
-            Err(RuntimeError::FunctionNotFound(funcname.into()))
         }
+        Err(RuntimeError::NotFound(ImportType::Func(
+            import.name.clone(),
+        )))
+    }
+
+    pub fn import_memory(&mut self, import: &Import) -> Result<Addr, RuntimeError> {
+        let module = self
+            .importer
+            .import(&import.module)
+            .ok_or_else(|| RuntimeError::ModuleNotFound(import.module.clone()))?;
+        let instance = self.new_instance(module)?;
+        if let Some(desc) = instance
+            .exports
+            .iter()
+            .filter(|e| e.name == import.name)
+            .map(|export| &export.desc)
+            .next()
+        {
+            if let ExportDesc::Mem(_) = desc {
+                if let Some(addr) = instance.memaddr {
+                    self.instances.push(instance);
+                    return Ok(addr);
+                }
+            }
+        }
+        Err(RuntimeError::NotFound(ImportType::Mem))
+    }
+
+    pub fn import_table(&mut self, import: &Import) -> Result<Addr, RuntimeError> {
+        let module = self
+            .importer
+            .import(&import.module)
+            .ok_or_else(|| RuntimeError::ModuleNotFound(import.module.clone()))?;
+        let instance = self.new_instance(module)?;
+        if let Some(desc) = instance
+            .exports
+            .iter()
+            .filter(|export| export.name == import.name)
+            .map(|export| &export.desc)
+            .next()
+        {
+            if let ExportDesc::Table(addr) = desc {
+                let ret = Ok(instance.tableaddrs[*addr as usize]);
+                self.instances.push(instance);
+                return ret;
+            }
+        }
+        Err(RuntimeError::NotFound(ImportType::Table(
+            import.name.clone(),
+        )))
+    }
+
+    pub fn import_global(&mut self, import: &Import) -> Result<Addr, RuntimeError> {
+        let module = self
+            .importer
+            .import(&import.module)
+            .ok_or_else(|| RuntimeError::ModuleNotFound(import.module.clone()))?;
+        let instance = self.new_instance(module)?;
+        if let Some(desc) = instance
+            .exports
+            .iter()
+            .filter(|export| export.name == import.name)
+            .map(|export| &export.desc)
+            .next()
+        {
+            if let ExportDesc::Global(addr) = desc {
+                let ret = Ok(instance.globaladdrs[*addr as usize]);
+                self.instances.push(instance);
+                return ret;
+            }
+        }
+        Err(RuntimeError::NotFound(ImportType::Global(
+            import.name.clone(),
+        )))
     }
 
     pub fn start(&mut self) -> Result<(), RuntimeError> {
@@ -293,6 +377,7 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
                         n: 0,
                         instance_addr: self.root,
                         local: vec![],
+                        stack_offset: 0,
                         pc: 0,
                     };
 
@@ -345,6 +430,7 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
                                 n: functype.1 .0.len(),
                                 instance_addr: self.root,
                                 local,
+                                stack_offset: 0,
                                 pc: 0,
                             };
                             self.exec(frame, start)
@@ -353,10 +439,10 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
                     };
                     Ok(results)
                 }
-                _ => Err(RuntimeError::NotFunction(name.into(), export.desc.clone())),
+                _ => Err(RuntimeError::NotFound(ImportType::Func(name.into()))),
             }
         } else {
-            Err(RuntimeError::FunctionNotFound(name.into()))
+            Err(RuntimeError::NotFound(ImportType::Func(name.into())))
         }
     }
 
@@ -754,5 +840,58 @@ mod tests {
         let mut runtime = Runtime::new(DefaultImporter::new(), TestEnv {}, "env", module).unwrap();
 
         assert_eq!(runtime.invoke("main", vec![]), Ok(vec![]));
+
+        let wasm = wat2wasm(
+            r#"(module
+                    (memory 1)
+                    (global $x (mut i32) (i32.const -12))
+                    (func (export "main") (result i32)
+                       (memory.grow (memory.grow (i32.const 0)))
+                    )
+            )"#,
+        )
+        .unwrap();
+
+        let mut parser = Parser::new(&wasm);
+        let module = parser.module().unwrap();
+        let mut runtime = debug_runtime(module).unwrap();
+        assert_eq!(runtime.invoke("main", vec![]), Ok(vec![Value::I32(1)]));
+    }
+
+    #[test]
+    fn global() {
+        let wasm = wat2wasm(
+            r#"(module
+                    (global $x (mut i32) (i32.const -12))
+                    (func (export "set-x") (param i32) (global.set $x (local.get 0)))
+            )"#,
+        )
+        .unwrap();
+
+        let mut parser = Parser::new(&wasm);
+        let module = parser.module().unwrap();
+        let mut runtime = debug_runtime(module).unwrap();
+        assert_eq!(runtime.invoke("set-x", vec![Value::I32(6)]), Ok(vec![]));
+    }
+
+    #[test]
+    fn loop1() {
+        let wasm = wat2wasm(
+            r#"(module
+                  (memory 1)
+                  (func (export "main") (result i32)
+                       i32.const 2
+                       memory.grow
+                       i32.const 0
+                       memory.grow
+                  )
+
+                  )"#,
+        )
+        .unwrap();
+        let mut parser = Parser::new(&wasm);
+        let module = parser.module().unwrap();
+        let mut runtime = debug_runtime(module).unwrap();
+        assert_eq!(runtime.invoke("main", vec![]), Ok(vec![Value::I32(3)]));
     }
 }

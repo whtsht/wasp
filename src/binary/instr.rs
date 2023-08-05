@@ -44,7 +44,6 @@ pub enum Instr {
         else_offset: Option<usize>,
         end_offset: usize,
     },
-    RJump(usize),
     Br(LabelIdx),
     BrIf(LabelIdx),
     BrTable {
@@ -258,4 +257,8 @@ pub enum Instr {
     I64TruncSatF32U,
     I64TruncSatF64S,
     I64TruncSatF64U,
+
+    // Pseudo Instructions
+    RJump(usize),
+    PopLabel,
 }

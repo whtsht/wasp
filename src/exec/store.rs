@@ -96,11 +96,6 @@ impl Store {
         }
     }
 
-    pub fn allocate_env_func(&mut self, functype: FuncType, name: String) -> Addr {
-        self.funcs.push(FuncInst::HostFunc { functype, name });
-        self.funcs.len() - 1
-    }
-
     pub fn allocate_global(&mut self, global: Global) -> Result<Addr, RuntimeError> {
         self.globals.push(GlobalInst {
             globaltype: global.type_,

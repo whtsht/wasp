@@ -36,10 +36,10 @@ impl<'a> Parser<'a> {
 
     pub fn importdesc(&mut self) -> Result<ImportDesc, Error> {
         match self.byte() {
-            Some(0x00) => Ok(ImportDesc::TypeIdx(self.typeidx()?)),
-            Some(0x01) => Ok(ImportDesc::TableType(self.table()?)),
-            Some(0x02) => Ok(ImportDesc::MemType(self.memory()?)),
-            Some(0x03) => Ok(ImportDesc::GlobalType(self.globaltype()?)),
+            Some(0x00) => Ok(ImportDesc::Func(self.typeidx()?)),
+            Some(0x01) => Ok(ImportDesc::Table(self.table()?)),
+            Some(0x02) => Ok(ImportDesc::Mem(self.memory()?)),
+            Some(0x03) => Ok(ImportDesc::Global(self.globaltype()?)),
             Some(_) => Err(Error::Expected(format!("importdesc"))),
             None => Err(Error::UnexpectedEof(format!("importdesc"))),
         }
@@ -342,11 +342,12 @@ impl<'a> Parser<'a> {
             .ok_or(Error::Expected(format!("section id: 0")))?;
         let (size, bytes) = self.u32_bytes()?;
         let name = self.name()?;
+        let name_len = name.len();
         Ok(Section {
             size,
             value: Custom {
-                name: self.name()?,
-                bytes: (&self.rest()[..(size as usize - name.len() - bytes - 2)]).into(),
+                name,
+                bytes: (&self.rest()[..(size as usize - name_len - bytes)]).into(),
             },
         })
     }
@@ -407,7 +408,7 @@ mod tests {
                 value: vec![Import {
                     module: "test".into(),
                     name: "global".into(),
-                    desc: ImportDesc::GlobalType(GlobalType {
+                    desc: ImportDesc::Global(GlobalType {
                         valtype: ValType::I32,
                         mut_: Mut::Var
                     })

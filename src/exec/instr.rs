@@ -30,15 +30,17 @@ pub fn step<E: Env + Debug>(
         Instr::Block { bt, end_offset } => {
             stack.push_label(Label {
                 n: instance.block_to_arity(bt),
-                offset: stack.values_len(),
+                stack_offset: stack.values_len(),
                 pc: end_offset + pc,
+                cont: false,
             });
         }
         Instr::Loop { bt } => {
             stack.push_label(Label {
                 n: instance.block_to_arity(bt),
-                offset: stack.values_len(),
+                stack_offset: stack.values_len(),
                 pc,
+                cont: true,
             });
         }
         Instr::If {
@@ -50,57 +52,64 @@ pub fn step<E: Env + Debug>(
             if c != 0 {
                 stack.push_label(Label {
                     n: instance.block_to_arity(bt),
-                    offset: stack.values_len(),
+                    stack_offset: stack.values_len(),
                     pc: end_offset + pc,
+                    cont: false,
                 });
             } else if let Some(else_offset) = else_offset {
                 stack.push_label(Label {
                     n: instance.block_to_arity(bt),
-                    offset: stack.values_len(),
+                    stack_offset: stack.values_len(),
                     pc: end_offset + pc,
+                    cont: false,
                 });
                 return Ok(Some(else_offset + pc));
             } else {
                 return Ok(Some(end_offset + pc));
             }
         }
-        Instr::RJump(r) => return Ok(Some(*r + pc)),
         Instr::Br(l) => {
+            if *l as usize >= stack.labels_len() {
+                let new_pc = unwind_stack(&frame, stack);
+                return Ok(new_pc);
+            }
             let new_pc = stack.jump(*l as usize);
             return Ok(Some(new_pc));
         }
         Instr::BrIf(l) => {
             let c = stack.pop_value::<i32>();
             if c != 0 {
+                if *l as usize >= stack.labels_len() {
+                    let new_pc = unwind_stack(&frame, stack);
+                    return Ok(new_pc);
+                }
                 let new_pc = stack.jump(*l as usize);
                 return Ok(Some(new_pc));
             }
         }
         Instr::BrTable { indexs, default } => {
             let i = stack.pop_value::<i32>() as usize;
-            return if i <= indexs.len() {
+            return if i < indexs.len() {
+                let l = indexs[i] as usize;
+                if l >= stack.labels_len() {
+                    let new_pc = unwind_stack(&frame, stack);
+                    return Ok(new_pc);
+                }
                 let new_pc = stack.jump(indexs[i] as usize);
                 Ok(Some(new_pc))
             } else {
-                let new_pc = stack.jump(*default as usize);
-                Ok(Some(new_pc))
+                let l = *default as usize;
+                if l >= stack.labels_len() {
+                    let new_pc = unwind_stack(&frame, stack);
+                    return Ok(new_pc);
+                }
+                let new_pc = stack.jump(l as usize);
+                return Ok(Some(new_pc));
             };
         }
         Instr::Return => {
-            let n = frame.n;
-            let mut results: Vec<Value> = vec![];
-            for _ in 0..n {
-                results.push(stack.pop_value());
-            }
-            for _ in 0..n {
-                stack.push_value(results.pop().unwrap());
-            }
-            stack.pop_frame();
-            if stack.frames_len() == 0 {
-                return Ok(None);
-            } else {
-                return Ok(Some(frame.pc));
-            }
+            let new_pc = unwind_stack(&frame, stack);
+            return Ok(new_pc);
         }
         Instr::Call(a) => {
             let func = &store.funcs[*a as usize];
@@ -387,11 +396,35 @@ pub fn step<E: Env + Debug>(
         Instr::F32Div => stack.binop(|a: f32, b| a / b),
         Instr::F64Div => stack.binop(|a: f64, b| a / b),
         // fmin_N
-        Instr::F32Min => stack.binop(f32::min),
-        Instr::F64Min => stack.binop(f64::min),
+        Instr::F32Min => stack.binop(|a: f32, b| {
+            if a.is_nan() || b.is_nan() {
+                f32::NAN
+            } else {
+                a.min(b)
+            }
+        }),
+        Instr::F64Min => stack.binop(|a: f64, b| {
+            if a.is_nan() || b.is_nan() {
+                f64::NAN
+            } else {
+                a.min(b)
+            }
+        }),
         // fmax_N
-        Instr::F32Max => stack.binop(f32::max),
-        Instr::F64Max => stack.binop(f64::max),
+        Instr::F32Max => stack.binop(|a: f32, b| {
+            if a.is_nan() || b.is_nan() {
+                f32::NAN
+            } else {
+                a.max(b)
+            }
+        }),
+        Instr::F64Max => stack.binop(|a: f64, b| {
+            if a.is_nan() || b.is_nan() {
+                f64::NAN
+            } else {
+                a.max(b)
+            }
+        }),
         // fcopysign_N
         Instr::F32Copysign => stack.binop(f32::copysign),
         Instr::F64Copysign => stack.binop(f64::copysign),
@@ -520,8 +553,31 @@ pub fn step<E: Env + Debug>(
         Instr::I64TruncSatF32U => stack.cvtop(|v: f32| cast::f32_to_u64_sat(v) as i64),
         Instr::I64TruncSatF64S => stack.cvtop(|v: f64| cast::f64_to_i64_sat(v)),
         Instr::I64TruncSatF64U => stack.cvtop(|v: f64| cast::f64_to_u64_sat(v) as i64),
+
+        Instr::RJump(r) => return Ok(Some(*r + pc)),
+        Instr::PopLabel => {
+            stack.pop_label();
+        }
     }
     Ok(Some(pc + 1))
+}
+
+pub fn unwind_stack(frame: &Frame, stack: &mut Stack) -> Option<usize> {
+    let n = frame.n;
+    let mut results: Vec<Value> = vec![];
+    for _ in 0..n {
+        results.push(stack.pop_value());
+    }
+    stack.values_unwind(frame.stack_offset);
+    for _ in 0..n {
+        stack.push_value(results.pop().unwrap());
+    }
+    stack.pop_frame();
+    if stack.frames_len() == 0 {
+        None
+    } else {
+        Some(frame.pc)
+    }
 }
 
 pub fn invoke<E: Env>(
@@ -570,6 +626,7 @@ pub fn invoke<E: Env>(
                 n: functype.1 .0.len(),
                 instance_addr: *instance_addr,
                 local,
+                stack_offset: stack.values_len(),
                 pc: pc + 1,
             };
             stack.push_frame(new_frame);

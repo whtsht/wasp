@@ -6,8 +6,9 @@ use super::{runtime::Addr, trap::Trap, value::Value};
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Label {
     pub n: usize,
-    pub offset: usize,
+    pub stack_offset: usize,
     pub pc: usize,
+    pub cont: bool,
 }
 
 #[derive(Debug, PartialEq, Clone, Default)]
@@ -16,6 +17,7 @@ pub struct Frame {
     pub instance_addr: Addr,
     pub local: Vec<Value>,
     pub pc: usize,
+    pub stack_offset: usize,
 }
 
 #[derive(Debug, PartialEq, Default, Clone)]
@@ -186,22 +188,24 @@ impl Stack {
 
     pub fn jump(&mut self, l: usize) -> usize {
         let label = self.th_label(l);
-        let mut values: Vec<Value> = vec![];
-        for _ in 0..label.n {
-            let v = self.pop_value();
-            println!("v = {:?}", v);
-            values.push(v);
+        if !label.cont {
+            let mut values: Vec<Value> = vec![];
+            for _ in 0..label.n {
+                let v = self.pop_value();
+                values.push(v);
+            }
+
+            self.values_unwind(label.stack_offset);
+
+            for value in values.into_iter().rev() {
+                self.push_value(value);
+            }
         }
 
-        self.values_unwind(label.offset);
-
-        for _ in 0..=l {
+        for _ in 0..(l + 1) {
             self.pop_label();
         }
 
-        for value in values.into_iter().rev() {
-            self.push_value(value);
-        }
         label.pc
     }
 }
@@ -216,13 +220,15 @@ mod tests {
     fn stack_label() {
         let label1 = Label {
             n: 0,
-            offset: 0,
+            stack_offset: 0,
             pc: 10,
+            cont: false,
         };
         let label2 = Label {
             n: 0,
-            offset: 1,
+            stack_offset: 1,
             pc: 0,
+            cont: false,
         };
         let mut stack = Stack::new();
         stack.push_label(label1);
@@ -231,16 +237,18 @@ mod tests {
             stack.pop_label(),
             Label {
                 n: 0,
-                offset: 1,
-                pc: 0
+                stack_offset: 1,
+                pc: 0,
+                cont: false,
             }
         );
         assert_eq!(
             stack.pop_label(),
             Label {
                 n: 0,
-                offset: 0,
-                pc: 10
+                stack_offset: 0,
+                pc: 10,
+                cont: false,
             }
         );
 
@@ -253,12 +261,14 @@ mod tests {
             n: 0,
             instance_addr: 0,
             local: vec![],
+            stack_offset: 0,
             pc: 0,
         };
         let frame2 = Frame {
             n: 0,
             instance_addr: 0,
             local: vec![Value::I32(1), Value::F32(3.0)],
+            stack_offset: 0,
             pc: 0,
         };
         let mut stack = Stack::new();
@@ -271,6 +281,7 @@ mod tests {
                 n: 0,
                 instance_addr: 0,
                 local: vec![Value::I32(1), Value::F32(3.0)],
+                stack_offset: 0,
                 pc: 0
             }
         );
@@ -280,6 +291,7 @@ mod tests {
                 n: 0,
                 instance_addr: 0,
                 local: vec![],
+                stack_offset: 0,
                 pc: 0
             }
         );

@@ -44,11 +44,12 @@ impl<'a> Parser<'a> {
             Some(0x01) => Instr::Nop,
             Some(0x02) => {
                 let bt = self.blocktype()?;
-                let inner: Vec<Instr> = self
+                let mut inner: Vec<Instr> = self
                     .take_while0(Self::instr, |b| b == 0x0B)?
                     .into_iter()
                     .flatten()
                     .collect();
+                inner.push(Instr::PopLabel);
                 let mut instrs = vec![Instr::Block {
                     bt,
                     end_offset: inner.len() + 1,
@@ -58,11 +59,12 @@ impl<'a> Parser<'a> {
             }
             Some(0x03) => {
                 let bt = self.blocktype()?;
-                let inner: Vec<Instr> = self
+                let mut inner: Vec<Instr> = self
                     .take_while0(Self::instr, |b| b == 0x0B)?
                     .into_iter()
                     .flatten()
                     .collect();
+                inner.push(Instr::PopLabel);
                 let mut instrs = vec![Instr::Loop { bt }];
                 instrs.extend(inner.into_iter());
                 return Ok(instrs);
@@ -77,11 +79,15 @@ impl<'a> Parser<'a> {
                             .flatten()
                             .collect();
 
-                        let else_instrs: Vec<Instr> = p
+                        then_instrs.push(Instr::PopLabel);
+
+                        let mut else_instrs: Vec<Instr> = p
                             .take_while0(Self::instr, |b| b == 0x0B)?
                             .into_iter()
                             .flatten()
                             .collect();
+                        else_instrs.push(Instr::PopLabel);
+
                         then_instrs.push(Instr::RJump(else_instrs.len() + 1));
                         let mut instrs = vec![Instr::If {
                             bt,
@@ -94,11 +100,12 @@ impl<'a> Parser<'a> {
                     },
                     |p| {
                         let bt = p.blocktype()?;
-                        let then_instrs: Vec<Instr> = p
+                        let mut then_instrs: Vec<Instr> = p
                             .take_while0(Self::instr, |b| b == 0x0B)?
                             .into_iter()
                             .flatten()
                             .collect();
+                        then_instrs.push(Instr::PopLabel);
                         let mut instrs = vec![Instr::If {
                             bt,
                             else_offset: None,
@@ -372,14 +379,16 @@ mod tests {
                 Instr::I32Const(0),
                 Instr::If {
                     bt: Block::Empty,
-                    else_offset: Some(4),
-                    end_offset: 6
+                    else_offset: Some(5),
+                    end_offset: 8
                 },
                 Instr::I32Const(1),
                 Instr::Call(0),
-                Instr::RJump(3),
+                Instr::PopLabel,
+                Instr::RJump(4),
                 Instr::I32Const(0),
-                Instr::Call(0)
+                Instr::Call(0),
+                Instr::PopLabel,
             ]))
         );
     }

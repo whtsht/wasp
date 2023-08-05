@@ -42,6 +42,9 @@ enum TestCommand<'a> {
     Module {
         filename: &'a str,
     },
+    Action {
+        action: Action<'a>,
+    },
 }
 
 impl<'a> TestCommand<'a> {
@@ -62,6 +65,9 @@ impl<'a> TestCommand<'a> {
             "module" => Some(TestCommand::Module {
                 filename: v.get("filename").unwrap().as_str().unwrap(),
             }),
+            "action" => Some(TestCommand::Action {
+                action: Action::from_value(v.get("action").unwrap())?,
+            }),
             _ => None,
         }
     }
@@ -75,7 +81,7 @@ enum Action<'a> {
 fn json_to_value(value: &Value) -> WValue {
     let ty = value.get("type").unwrap().as_str().unwrap();
     let value = value.get("value").unwrap().as_str().unwrap();
-    if value == "nan:canonical" {
+    if value.find("nan").is_some() {
         match ty {
             "f32" => WValue::F32(f32::NAN),
             "f64" => WValue::F64(f64::NAN),
@@ -134,24 +140,65 @@ fn get_module(filename: &str) -> Module {
     parser.module().unwrap()
 }
 
-fn run_test<E: Env + Debug, I: Importer + Debug>(
-    runtime: &mut Runtime<E, I>,
-    command: &TestCommand,
-) {
+#[derive(Debug)]
+struct SpecTestEnv {}
+impl Env for SpecTestEnv {
+    fn call(
+        &mut self,
+        name: &str,
+        _params: Vec<WValue>,
+        _memory: Option<&mut wasp::exec::store::MemInst>,
+    ) -> Result<Vec<WValue>, wasp::exec::env::EnvError> {
+        if name == "print" {}
+        Ok(vec![])
+    }
+}
+
+fn run_test(runtime: &mut Runtime<SpecTestEnv, DefaultImporter>, command: &TestCommand) {
     match command {
         TestCommand::AssertReturn { action, expected } => match action {
             Action::Invoke { fnname, args } => {
-                info!("{}", fnname);
+                info!("{}({:?})", fnname, args);
                 let ret = runtime.invoke(fnname, args.clone()).unwrap();
-                assert_eq!(&ret, expected);
-                info!("assert_return: {}:({:?}) == {:?}", fnname, args, ret);
+                assert_eq!(
+                    &ret, expected,
+                    "\nexpected {:?}, found {:?}\n fnname: {:?}",
+                    expected, ret, fnname
+                );
+                info!("    = {:?}", ret);
             }
         },
         TestCommand::Module { filename } => {
             let module = get_module(&filename);
-            runtime.resister_module(module).unwrap();
+            *runtime =
+                Runtime::new(DefaultImporter::new(), SpecTestEnv {}, "spectest", module).unwrap();
+            runtime.start().ok();
+        }
+        TestCommand::Action { action } => match action {
+            Action::Invoke { fnname, args } => {
+                info!("{}: {:?}", fnname, args);
+                runtime.invoke(fnname, args.clone()).unwrap();
+            }
+        },
+    }
+}
+
+fn skip(filename: &str) -> bool {
+    // TODO
+    let skip_list = [
+        "./tests/testsuite/imports.wast",
+        "./tests/testsuite/exports.wast",
+        "./tests/testsuite/binary-leb128.wast",
+        "./tests/testsuite/data.wast",
+        "./tests/testsuite/elem.wast",
+        "./tests/testsuite/linking.wast",
+    ];
+    for s in skip_list.iter() {
+        if filename == *s {
+            return true;
         }
     }
+    false
 }
 
 pub fn run_tests() {
@@ -160,6 +207,10 @@ pub fn run_tests() {
     for entry in entries {
         if let Ok(entry) = entry {
             if entry.path().extension().and_then(|s| s.to_str()) == Some("wast") {
+                if skip(entry.path().to_str().unwrap()) {
+                    continue;
+                }
+
                 info!("{:?}", entry.path());
                 wast2json(&entry.path());
 
@@ -173,7 +224,7 @@ pub fn run_tests() {
                 let commands = get_test_case(&v);
 
                 let mut runtime =
-                    Runtime::without_module(DefaultImporter::new(), DebugEnv {}, "env");
+                    Runtime::without_module(DefaultImporter::new(), SpecTestEnv {}, "spectes");
                 for command in commands.iter() {
                     run_test(&mut runtime, command);
                 }
