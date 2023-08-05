@@ -134,32 +134,6 @@ fn get_module(filename: &str) -> Module {
     parser.module().unwrap()
 }
 
-macro_rules! assert_eq_with_nan {
-    ($left:expr, $right:expr) => {{
-        match (&$left, &$right) {
-            (left_val, right_val) => {
-                if left_val.is_nan() && right_val.is_nan() {
-                    // Both are NaN, consider them equal.
-                } else {
-                    // If one is NaN and the other is not, raise an assertion failure.
-                    assert!(
-                        !left_val.is_nan() && !right_val.is_nan(),
-                        "Assertion failed: `(left == right)` with NaN values: `NaN == {:?}`",
-                        if left_val.is_nan() {
-                            right_val
-                        } else {
-                            left_val
-                        }
-                    );
-
-                    // Regular equality check for non-NaN values.
-                    assert_eq!(left_val, right_val);
-                }
-            }
-        }
-    }};
-}
-
 fn run_test<E: Env + Debug, I: Importer + Debug>(
     runtime: &mut Runtime<E, I>,
     command: &TestCommand,
@@ -167,6 +141,7 @@ fn run_test<E: Env + Debug, I: Importer + Debug>(
     match command {
         TestCommand::AssertReturn { action, expected } => match action {
             Action::Invoke { fnname, args } => {
+                info!("{}", fnname);
                 let ret = runtime.invoke(fnname, args.clone()).unwrap();
                 assert_eq!(&ret, expected);
                 info!("assert_return: {}:({:?}) == {:?}", fnname, args, ret);

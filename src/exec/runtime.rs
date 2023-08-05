@@ -320,17 +320,31 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
                             .env
                             .call(
                                 &name,
-                                vec![],
+                                params,
                                 instance.memaddr.map(|a| &mut self.store.mems[a]),
                             )
                             .map_err(|err| RuntimeError::Env(err))?,
                         FuncInst::InnerFunc {
-                            start, functype, ..
+                            start,
+                            functype,
+                            locals,
+                            ..
                         } => {
+                            let mut local = vec![];
+                            local.extend(params);
+                            for val in locals.iter() {
+                                match val {
+                                    ValType::I32 => local.push(Value::I32(0)),
+                                    ValType::I64 => local.push(Value::I64(0)),
+                                    ValType::F32 => local.push(Value::F32(0.0)),
+                                    ValType::F64 => local.push(Value::F64(0.0)),
+                                    _ => todo!(),
+                                }
+                            }
                             let frame = Frame {
                                 n: functype.1 .0.len(),
                                 instance_addr: self.root,
-                                local: params,
+                                local,
                                 pc: 0,
                             };
                             self.exec(frame, start)

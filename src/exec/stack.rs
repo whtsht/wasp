@@ -46,6 +46,12 @@ impl Stack {
         &self.frames
     }
 
+    pub fn values_unwind(&mut self, offset: usize) {
+        while self.values_len() > offset {
+            self.pop_value::<Value>();
+        }
+    }
+
     pub fn values_len(&self) -> usize {
         self.values.len()
     }
@@ -182,13 +188,12 @@ impl Stack {
         let label = self.th_label(l);
         let mut values: Vec<Value> = vec![];
         for _ in 0..label.n {
-            values.push(self.pop_value());
+            let v = self.pop_value();
+            println!("v = {:?}", v);
+            values.push(v);
         }
 
-        let len = self.values_len() - label.offset;
-        for _ in 0..len {
-            self.pop_value::<Value>();
-        }
+        self.values_unwind(label.offset);
 
         for _ in 0..=l {
             self.pop_label();

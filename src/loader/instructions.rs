@@ -71,16 +71,18 @@ impl<'a> Parser<'a> {
                 return self.or(
                     |p| {
                         let bt = p.blocktype()?;
-                        let then_instrs: Vec<Instr> = p
+                        let mut then_instrs: Vec<Instr> = p
                             .take_while0(Self::instr, |b| b == 0x05)?
                             .into_iter()
                             .flatten()
                             .collect();
+
                         let else_instrs: Vec<Instr> = p
                             .take_while0(Self::instr, |b| b == 0x0B)?
                             .into_iter()
                             .flatten()
                             .collect();
+                        then_instrs.push(Instr::RJump(else_instrs.len() + 1));
                         let mut instrs = vec![Instr::If {
                             bt,
                             else_offset: Some(then_instrs.len() + 1),
@@ -370,11 +372,12 @@ mod tests {
                 Instr::I32Const(0),
                 Instr::If {
                     bt: Block::Empty,
-                    else_offset: Some(3),
-                    end_offset: 5
+                    else_offset: Some(4),
+                    end_offset: 6
                 },
                 Instr::I32Const(1),
                 Instr::Call(0),
+                Instr::RJump(3),
                 Instr::I32Const(0),
                 Instr::Call(0)
             ]))

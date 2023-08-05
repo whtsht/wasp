@@ -64,6 +64,7 @@ pub fn step<E: Env + Debug>(
                 return Ok(Some(end_offset + pc));
             }
         }
+        Instr::RJump(r) => return Ok(Some(*r + pc)),
         Instr::Br(l) => {
             let new_pc = stack.jump(*l as usize);
             return Ok(Some(new_pc));
@@ -555,6 +556,7 @@ pub fn invoke<E: Env>(
             for _ in 0..functype.0 .0.len() {
                 local.push(stack.pop_value());
             }
+            local.reverse();
             for val in locals.iter() {
                 match val {
                     ValType::I32 => local.push(Value::I32(0)),
