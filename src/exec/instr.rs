@@ -116,7 +116,7 @@ pub fn step<E: Env + Debug>(
         }
         Instr::Call(a) => {
             let func = &store.funcs[*a as usize];
-            if let Some(pc) = invoke(
+            if let Some(pc) = attach(
                 func,
                 stack,
                 instance.memaddr.map(|a| &mut store.mems[a]),
@@ -140,7 +140,7 @@ pub fn step<E: Env + Debug>(
                 if func.functype() != ft {
                     return Err(Trap::FuncTypeNotMatch(ft.clone(), func.functype().clone()));
                 }
-                if let Some(pc) = invoke(
+                if let Some(pc) = attach(
                     func,
                     stack,
                     instance.memaddr.map(|a| &mut store.mems[a]),
@@ -586,7 +586,7 @@ pub fn unwind_stack(frame: &Frame, stack: &mut Stack) -> Option<usize> {
     }
 }
 
-pub fn invoke<E: Env>(
+pub fn attach<E: Env + Debug>(
     func: &FuncInst,
     stack: &mut Stack,
     memory: Option<&mut MemInst>,

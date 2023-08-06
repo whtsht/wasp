@@ -40,6 +40,10 @@ impl Stack {
         &self.values
     }
 
+    pub fn extend_values(&mut self, values: Vec<Value>) {
+        self.values.extend(values);
+    }
+
     pub fn labels(&self) -> &Vec<Label> {
         &self.labels
     }

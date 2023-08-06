@@ -64,11 +64,11 @@ pub struct DataInst {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Store {
-    pub funcs: Vec<FuncInst>,
     pub globals: Vec<GlobalInst>,
     pub tables: Vec<TableInst>,
     pub elems: Vec<ElemInst>,
     pub mems: Vec<MemInst>,
+    pub funcs: Vec<FuncInst>,
     pub datas: Vec<DataInst>,
 }
 

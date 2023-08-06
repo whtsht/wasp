@@ -3,8 +3,8 @@ use crate::lib::*;
 
 use super::env::{Env, EnvError};
 use super::importer::Importer;
-use super::instr::step;
-use super::stack::{Frame, Stack};
+use super::instr::{attach, step};
+use super::stack::Stack;
 use super::store::{FuncInst, Store};
 use super::trap::Trap;
 use super::value::{Ref, Value};
@@ -52,13 +52,13 @@ impl Instance {
 pub struct Runtime<E: Env + Debug, I: Importer + Debug> {
     env_name: String,
     instrs: Vec<Instr>,
-    root: usize,
     instances: Vec<Instance>,
-    store: Store,
+    root: usize,
     stack: Stack,
+    pc: usize,
+    store: Store,
     importer: I,
     env: E,
-    pc: usize,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -359,31 +359,14 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
 
     pub fn start(&mut self) -> Result<(), RuntimeError> {
         let instance = &self.instances[self.root];
+        self.stack = Stack::new();
         if let Some(index) = instance.start {
-            match self.store.funcs[index].clone() {
-                FuncInst::HostFunc { name, .. } => {
-                    if let Some(a) = instance.memaddr {
-                        self.env
-                            .call(&name, vec![], Some(&mut self.store.mems[a]))
-                            .map_err(|err| RuntimeError::Env(err))?;
-                    } else {
-                        self.env
-                            .call(&name, vec![], None)
-                            .map_err(|err| RuntimeError::Env(err))?;
-                    }
-                }
-                FuncInst::InnerFunc { start, .. } => {
-                    let frame = Frame {
-                        n: 0,
-                        instance_addr: self.root,
-                        local: vec![],
-                        stack_offset: 0,
-                        pc: 0,
-                    };
-
-                    self.exec(frame, start)
-                        .map_err(|trap| RuntimeError::Trap(trap))?;
-                }
+            let func = &self.store.funcs[index];
+            let memory = instance.memaddr.map(|a| &mut self.store.mems[a]);
+            if let Some(start) = attach(func, &mut self.stack, memory, &mut self.env, self.pc)
+                .map_err(|trap| RuntimeError::Trap(trap))?
+            {
+                self.exec(start).map_err(|trap| RuntimeError::Trap(trap))?;
             }
         }
         Ok(())
@@ -391,6 +374,7 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
 
     pub fn invoke(&mut self, name: &str, params: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
         let instance = &self.instances[self.root];
+        self.stack = Stack::new();
         if let Some(export) = instance
             .exports
             .iter()
@@ -399,45 +383,17 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
         {
             match export.desc {
                 ExportDesc::Func(index) => {
-                    let results = match self.store.funcs[instance.funcaddrs[index as usize]].clone()
+                    let func = &self.store.funcs[instance.funcaddrs[index as usize]];
+                    let memory = instance.memaddr.map(|a| &mut self.store.mems[a]);
+                    self.stack.extend_values(params);
+                    if let Some(start) =
+                        attach(func, &mut self.stack, memory, &mut self.env, self.pc)
+                            .map_err(|trap| RuntimeError::Trap(trap))?
                     {
-                        FuncInst::HostFunc { name, .. } => self
-                            .env
-                            .call(
-                                &name,
-                                params,
-                                instance.memaddr.map(|a| &mut self.store.mems[a]),
-                            )
-                            .map_err(|err| RuntimeError::Env(err))?,
-                        FuncInst::InnerFunc {
-                            start,
-                            functype,
-                            locals,
-                            ..
-                        } => {
-                            let mut local = vec![];
-                            local.extend(params);
-                            for val in locals.iter() {
-                                match val {
-                                    ValType::I32 => local.push(Value::I32(0)),
-                                    ValType::I64 => local.push(Value::I64(0)),
-                                    ValType::F32 => local.push(Value::F32(0.0)),
-                                    ValType::F64 => local.push(Value::F64(0.0)),
-                                    _ => todo!(),
-                                }
-                            }
-                            let frame = Frame {
-                                n: functype.1 .0.len(),
-                                instance_addr: self.root,
-                                local,
-                                stack_offset: 0,
-                                pc: 0,
-                            };
-                            self.exec(frame, start)
-                                .map_err(|trap| RuntimeError::Trap(trap))?
-                        }
-                    };
-                    Ok(results)
+                        self.exec(start).map_err(|trap| RuntimeError::Trap(trap))
+                    } else {
+                        Ok(self.stack.get_returns())
+                    }
                 }
                 _ => Err(RuntimeError::NotFound(ImportType::Func(name.into()))),
             }
@@ -446,10 +402,7 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
         }
     }
 
-    pub fn exec(&mut self, frame: Frame, start: usize) -> Result<Vec<Value>, Trap> {
-        let mut stack = Stack::new();
-        stack.push_frame(frame);
-        self.stack = stack;
+    pub fn exec(&mut self, start: usize) -> Result<Vec<Value>, Trap> {
         self.pc = start;
         while self.step()? == ExecState::Continue {}
         Ok(self.stack.get_returns())
