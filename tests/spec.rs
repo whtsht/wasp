@@ -186,7 +186,7 @@ fn run_test(
             *runtime = Runtime::new("spectest");
             let mut importer = SpecTestImporter {};
             runtime
-                .resister_module(store, &mut importer, &filename)
+                .import_module(store, &mut importer, &filename)
                 .unwrap();
             runtime.start(store, env).ok();
         }

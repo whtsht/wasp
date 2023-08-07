@@ -122,7 +122,24 @@ impl Runtime {
         }
     }
 
-    pub fn resister_module<I: Importer>(
+    pub fn add_module(&mut self, store: &mut Store, module: Module) -> Result<(), RuntimeError> {
+        struct EmptyImporter {}
+        impl Importer for EmptyImporter {
+            fn import(&mut self, _: &str) -> Option<Module> {
+                panic!()
+            }
+        }
+
+        let mut importer = EmptyImporter {};
+        let instance = self.new_instance(store, module, &mut importer)?;
+
+        self.instances.push(instance);
+
+        self.root = self.instances.len() - 1;
+        Ok(())
+    }
+
+    pub fn import_module<I: Importer>(
         &mut self,
         store: &mut Store,
         importer: &mut I,
@@ -480,7 +497,7 @@ mod tests {
         let mut impoter = TestImporter { module };
         let mut runtime = Runtime::new("env");
         runtime
-            .resister_module(&mut store, &mut impoter, "debug")
+            .import_module(&mut store, &mut impoter, "debug")
             .unwrap();
         let mut env = DebugEnv {};
         assert_eq!(

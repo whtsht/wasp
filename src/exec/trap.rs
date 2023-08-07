@@ -1,6 +1,3 @@
-#[cfg(not(feature = "std"))]
-use crate::lib::*;
-
 use super::env::EnvError;
 
 #[derive(Debug, PartialEq, Eq)]

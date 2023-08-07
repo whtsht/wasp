@@ -1,5 +1,7 @@
-use alloc::vec::Vec;
+#[cfg(not(feature = "std"))]
+use crate::lib::*;
 use core::convert::identity;
+use core::ops::{Index, IndexMut};
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct OptVec<T> {
@@ -50,7 +52,6 @@ impl<T> OptVec<T> {
     }
 }
 
-use core::ops::{Index, IndexMut};
 impl<T> Index<usize> for OptVec<T> {
     type Output = T;
 
