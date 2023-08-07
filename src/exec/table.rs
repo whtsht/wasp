@@ -3,6 +3,7 @@ use crate::binary::Elem;
 use crate::lib::*;
 
 use super::{
+    opt_vec::OptVec,
     runtime::{eval_const, Addr, Instance, RuntimeError},
     stack::Stack,
     store::{ElemInst, Store, TableInst},
@@ -150,9 +151,7 @@ pub fn table_init_manual(tab: &mut TableInst, offset: usize, elems: &Vec<Ref>) {
 
 pub fn elem_drop(x: &u32, instance: &mut Instance, store: &mut Store) {
     let a = instance.elemaddrs[*x as usize];
-    // TODO
-    // drop store.elems[a]
-    let _ = &store.elems[a];
+    store.elems.remove(a);
 }
 
 pub fn table_size(x: &u32, instance: &mut Instance, store: &mut Store, stack: &mut Stack) {
@@ -162,7 +161,7 @@ pub fn table_size(x: &u32, instance: &mut Instance, store: &mut Store, stack: &m
     stack.push_value(sz);
 }
 
-pub fn elem_passiv(elems: &mut Vec<ElemInst>, elem: Elem) -> Result<(), RuntimeError> {
+pub fn elem_passiv(elems: &mut OptVec<ElemInst>, elem: Elem) -> Result<Addr, RuntimeError> {
     let vals = elem
         .init
         .iter()
@@ -178,11 +177,10 @@ pub fn elem_passiv(elems: &mut Vec<ElemInst>, elem: Elem) -> Result<(), RuntimeE
             Value::Ref(r) => r,
         })
         .collect();
-    elems.push(ElemInst {
+    Ok(elems.push(ElemInst {
         reftype: elem.type_.clone(),
         elem: refs,
-    });
-    Ok(())
+    }))
 }
 
 pub fn elem_active(table: &mut TableInst, offset: usize, elem: Elem) -> Result<(), RuntimeError> {

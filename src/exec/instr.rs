@@ -10,11 +10,10 @@ use crate::binary::Instr;
 use crate::binary::ValType;
 #[cfg(not(feature = "std"))]
 use crate::lib::*;
-use core::fmt::Debug;
 use core::ops::Neg;
 use num_traits::float::Float;
 
-pub fn step<E: Env + Debug>(
+pub fn step<E: Env>(
     env: &mut E,
     instances: &mut Vec<Instance>,
     instrs: &Vec<Instr>,
@@ -586,7 +585,7 @@ pub fn unwind_stack(frame: &Frame, stack: &mut Stack) -> Option<usize> {
     }
 }
 
-pub fn attach<E: Env + Debug>(
+pub fn attach<E: Env>(
     func: &FuncInst,
     stack: &mut Stack,
     memory: Option<&mut MemInst>,

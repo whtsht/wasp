@@ -24,6 +24,7 @@ pub enum ExecState {
 
 #[derive(Debug, PartialEq, Default, Clone)]
 pub struct Instance {
+    pub modname: String,
     pub funcaddrs: Vec<Addr>,
     pub types: Vec<FuncType>,
     pub globaladdrs: Vec<Addr>,
@@ -49,14 +50,13 @@ impl Instance {
 }
 
 #[derive(Debug)]
-pub struct Runtime<E: Env + Debug, I: Importer + Debug> {
+pub struct Runtime<E: Env, I: Importer> {
     env_name: String,
     instrs: Vec<Instr>,
     instances: Vec<Instance>,
     root: usize,
     stack: Stack,
     pc: usize,
-    store: Store,
     importer: I,
     env: E,
 }
@@ -78,31 +78,6 @@ pub enum ImportType {
     Mem,
 }
 
-#[cfg(feature = "std")]
-use super::env::DebugEnv;
-#[cfg(feature = "std")]
-use super::importer::DefaultImporter;
-
-#[cfg(feature = "std")]
-pub fn debug_runtime(module: Module) -> Result<Runtime<DebugEnv, DefaultImporter>, RuntimeError> {
-    let mut runtime = Runtime {
-        root: 0,
-        instrs: vec![],
-        env_name: "env".into(),
-        instances: vec![],
-        store: Store::new(),
-        importer: DefaultImporter::new(),
-        env: DebugEnv {},
-        stack: Stack::new(),
-        pc: 0,
-    };
-
-    let instance = runtime.new_instance(module)?;
-    runtime.instances.push(instance);
-
-    Ok(runtime)
-}
-
 pub fn eval_const(expr: &Expr) -> Result<Value, RuntimeError> {
     Ok(match expr.0[0] {
         Instr::I32Const(value) => Value::I32(value),
@@ -115,37 +90,42 @@ pub fn eval_const(expr: &Expr) -> Result<Value, RuntimeError> {
     })
 }
 
-impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
+impl<E: Env, I: Importer> Runtime<E, I> {
     pub fn allocate_func(
         &mut self,
         functype: FuncType,
         locals: Vec<ValType>,
         instrs: Vec<Instr>,
         instance_addr: Addr,
+        store: &mut Store,
     ) -> Addr {
         let start = self.instrs.len();
         self.instrs.extend(instrs);
         self.instrs.extend(vec![Instr::Return]);
-        self.store.funcs.push(FuncInst::InnerFunc {
+        store.funcs.push(FuncInst::InnerFunc {
             instance_addr,
             start,
             functype,
             locals,
-        });
-        self.store.funcs.len() - 1
+        })
+    }
+
+    pub fn instances(self) -> Vec<Instance> {
+        self.instances
     }
 
     pub fn new<S: Into<String>>(
+        store: &mut Store,
         importer: I,
         env: E,
         env_name: S,
         module: Module,
+        modname: &str,
     ) -> Result<Self, RuntimeError> {
         let mut runtime = Runtime {
             root: 0,
             instrs: vec![],
             instances: vec![],
-            store: Store::new(),
             importer,
             env,
             env_name: env_name.into(),
@@ -153,7 +133,7 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
             pc: 0,
         };
 
-        let instance = runtime.new_instance(module)?;
+        let instance = runtime.new_instance(store, module, modname)?;
         runtime.instances.push(instance);
         runtime.root = runtime.instances.len() - 1;
 
@@ -165,7 +145,6 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
             root: 0,
             instrs: vec![],
             instances: vec![],
-            store: Store::new(),
             importer,
             env,
             env_name: env_name.into(),
@@ -174,8 +153,16 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
         }
     }
 
-    pub fn resister_module(&mut self, module: Module) -> Result<(), RuntimeError> {
-        let instance = self.new_instance(module)?;
+    pub fn resister_module(
+        &mut self,
+        store: &mut Store,
+        modname: &str,
+    ) -> Result<(), RuntimeError> {
+        let module = self
+            .importer
+            .import(modname)
+            .ok_or(RuntimeError::ModuleNotFound(modname.into()))?;
+        let instance = self.new_instance(store, module, modname)?;
 
         self.instances.push(instance);
 
@@ -183,7 +170,12 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
         Ok(())
     }
 
-    fn new_instance(&mut self, module: Module) -> Result<Instance, RuntimeError> {
+    fn new_instance(
+        &mut self,
+        store: &mut Store,
+        module: Module,
+        modname: &str,
+    ) -> Result<Instance, RuntimeError> {
         let mut funcaddrs = vec![];
         let mut globaladdrs = vec![];
         let mut tableaddrs = vec![];
@@ -192,33 +184,36 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
         for import in module.imports {
             if import.module == self.env_name {
                 match import.desc {
-                    ImportDesc::Func(ty) => funcaddrs
-                        .push(self.import_env_func(module.types[ty as usize].clone(), import.name)),
+                    ImportDesc::Func(ty) => funcaddrs.push(self.import_env_func(
+                        store,
+                        module.types[ty as usize].clone(),
+                        import.name,
+                    )),
                     ImportDesc::Table(_) => {}
                     ImportDesc::Mem(_) => {}
                     ImportDesc::Global(_) => {}
                 }
             } else {
                 match import.desc {
-                    ImportDesc::Func(_) => funcaddrs.push(self.import_func(&import)?),
-                    ImportDesc::Mem(_) => memaddr = Some(self.import_memory(&import)?),
-                    ImportDesc::Table(_) => tableaddrs.push(self.import_table(&import)?),
-                    ImportDesc::Global(_) => globaladdrs.push(self.import_global(&import)?),
+                    ImportDesc::Func(_) => funcaddrs.push(self.import_func(store, &import)?),
+                    ImportDesc::Mem(_) => memaddr = Some(self.import_memory(store, &import)?),
+                    ImportDesc::Table(_) => tableaddrs.push(self.import_table(store, &import)?),
+                    ImportDesc::Global(_) => globaladdrs.push(self.import_global(store, &import)?),
                 }
             }
         }
 
         for global in module.globals {
-            globaladdrs.push(self.store.allocate_global(global)?);
+            globaladdrs.push(store.allocate_global(global)?);
         }
 
         for table in module.tables {
-            tableaddrs.push(self.store.allocate_table(table));
+            tableaddrs.push(store.allocate_table(table));
         }
 
         let mut elemaddrs = vec![];
         for elem in module.elems {
-            if let Some(addr) = self.store.allocate_elem(elem)? {
+            if let Some(addr) = store.allocate_elem(elem)? {
                 elemaddrs.push(addr);
             }
         }
@@ -226,25 +221,32 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
         let mut inner_funcaddr = vec![];
         for func in module.funcs {
             let functype = module.types[func.typeidx as usize].clone();
-            let addr = self.allocate_func(functype, func.locals, func.body.0, self.instances.len());
+            let addr = self.allocate_func(
+                functype,
+                func.locals,
+                func.body.0,
+                self.instances.len(),
+                store,
+            );
             inner_funcaddr.push(addr);
             funcaddrs.push(addr);
         }
         let instance_addr = self.instances.len();
-        self.store.update_func_inst(inner_funcaddr, instance_addr);
+        store.update_func_inst(&inner_funcaddr, instance_addr);
 
         if module.mems.len() > 0 {
-            memaddr = Some(self.store.allocate_mem(&module.mems[0]))
+            memaddr = Some(store.allocate_mem(&module.mems[0]))
         }
 
         let mut dataaddrs = vec![];
         for data in module.datas {
-            if let Some(addr) = self.store.allocate_data(data)? {
+            if let Some(addr) = store.allocate_data(data)? {
                 dataaddrs.push(addr);
             }
         }
 
         Ok(Instance {
+            modname: modname.into(),
             funcaddrs,
             types: module.types,
             globaladdrs,
@@ -257,17 +259,20 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
         })
     }
 
-    pub fn import_env_func(&mut self, functype: FuncType, name: String) -> Addr {
-        self.store.funcs.push(FuncInst::HostFunc { functype, name });
-        self.store.funcs.len() - 1
+    pub fn import_env_func(&mut self, store: &mut Store, functype: FuncType, name: String) -> Addr {
+        store.funcs.push(FuncInst::HostFunc { functype, name })
     }
 
-    pub fn import_func(&mut self, import: &Import) -> Result<usize, RuntimeError> {
+    pub fn import_func(
+        &mut self,
+        store: &mut Store,
+        import: &Import,
+    ) -> Result<usize, RuntimeError> {
         let module = self
             .importer
             .import(&import.module)
             .ok_or_else(|| RuntimeError::ModuleNotFound(import.module.clone()))?;
-        let instance = self.new_instance(module)?;
+        let instance = self.new_instance(store, module, &import.module)?;
         if let Some(desc) = instance
             .exports
             .iter()
@@ -286,12 +291,16 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
         )))
     }
 
-    pub fn import_memory(&mut self, import: &Import) -> Result<Addr, RuntimeError> {
+    pub fn import_memory(
+        &mut self,
+        store: &mut Store,
+        import: &Import,
+    ) -> Result<Addr, RuntimeError> {
         let module = self
             .importer
             .import(&import.module)
             .ok_or_else(|| RuntimeError::ModuleNotFound(import.module.clone()))?;
-        let instance = self.new_instance(module)?;
+        let instance = self.new_instance(store, module, &import.module)?;
         if let Some(desc) = instance
             .exports
             .iter()
@@ -309,12 +318,16 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
         Err(RuntimeError::NotFound(ImportType::Mem))
     }
 
-    pub fn import_table(&mut self, import: &Import) -> Result<Addr, RuntimeError> {
+    pub fn import_table(
+        &mut self,
+        store: &mut Store,
+        import: &Import,
+    ) -> Result<Addr, RuntimeError> {
         let module = self
             .importer
             .import(&import.module)
             .ok_or_else(|| RuntimeError::ModuleNotFound(import.module.clone()))?;
-        let instance = self.new_instance(module)?;
+        let instance = self.new_instance(store, module, &import.module)?;
         if let Some(desc) = instance
             .exports
             .iter()
@@ -333,12 +346,16 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
         )))
     }
 
-    pub fn import_global(&mut self, import: &Import) -> Result<Addr, RuntimeError> {
+    pub fn import_global(
+        &mut self,
+        store: &mut Store,
+        import: &Import,
+    ) -> Result<Addr, RuntimeError> {
         let module = self
             .importer
             .import(&import.module)
             .ok_or_else(|| RuntimeError::ModuleNotFound(import.module.clone()))?;
-        let instance = self.new_instance(module)?;
+        let instance = self.new_instance(store, module, &import.module)?;
         if let Some(desc) = instance
             .exports
             .iter()
@@ -357,22 +374,28 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
         )))
     }
 
-    pub fn start(&mut self) -> Result<(), RuntimeError> {
+    pub fn start(&mut self, store: &mut Store) -> Result<(), RuntimeError> {
         let instance = &self.instances[self.root];
         self.stack = Stack::new();
         if let Some(index) = instance.start {
-            let func = &self.store.funcs[index];
-            let memory = instance.memaddr.map(|a| &mut self.store.mems[a]);
+            let func = &store.funcs[index];
+            let memory = instance.memaddr.map(|a| &mut store.mems[a]);
             if let Some(start) = attach(func, &mut self.stack, memory, &mut self.env, self.pc)
                 .map_err(|trap| RuntimeError::Trap(trap))?
             {
-                self.exec(start).map_err(|trap| RuntimeError::Trap(trap))?;
+                self.exec(store, start)
+                    .map_err(|trap| RuntimeError::Trap(trap))?;
             }
         }
         Ok(())
     }
 
-    pub fn invoke(&mut self, name: &str, params: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
+    pub fn invoke(
+        &mut self,
+        store: &mut Store,
+        name: &str,
+        params: Vec<Value>,
+    ) -> Result<Vec<Value>, RuntimeError> {
         let instance = &self.instances[self.root];
         self.stack = Stack::new();
         if let Some(export) = instance
@@ -383,14 +406,15 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
         {
             match export.desc {
                 ExportDesc::Func(index) => {
-                    let func = &self.store.funcs[instance.funcaddrs[index as usize]];
-                    let memory = instance.memaddr.map(|a| &mut self.store.mems[a]);
+                    let func = &store.funcs[instance.funcaddrs[index as usize]];
+                    let memory = instance.memaddr.map(|a| &mut store.mems[a]);
                     self.stack.extend_values(params);
                     if let Some(start) =
                         attach(func, &mut self.stack, memory, &mut self.env, self.pc)
                             .map_err(|trap| RuntimeError::Trap(trap))?
                     {
-                        self.exec(start).map_err(|trap| RuntimeError::Trap(trap))
+                        self.exec(store, start)
+                            .map_err(|trap| RuntimeError::Trap(trap))
                     } else {
                         Ok(self.stack.get_returns())
                     }
@@ -402,19 +426,19 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
         }
     }
 
-    pub fn exec(&mut self, start: usize) -> Result<Vec<Value>, Trap> {
+    pub fn exec(&mut self, store: &mut Store, start: usize) -> Result<Vec<Value>, Trap> {
         self.pc = start;
-        while self.step()? == ExecState::Continue {}
+        while self.step(store)? == ExecState::Continue {}
         Ok(self.stack.get_returns())
     }
 
-    pub fn step(&mut self) -> Result<ExecState, Trap> {
+    pub fn step(&mut self, store: &mut Store) -> Result<ExecState, Trap> {
         if let Some(new_pc) = step(
             &mut self.env,
             &mut self.instances,
             &self.instrs,
             self.pc,
-            &mut self.store,
+            store,
             &mut self.stack,
         )? {
             self.pc = new_pc;
@@ -428,423 +452,63 @@ impl<E: Env + Debug, I: Importer + Debug> Runtime<E, I> {
 #[cfg(test)]
 mod tests {
     use super::Runtime;
-    use crate::exec::env::{DebugEnv, Env};
-    use crate::exec::importer::DefaultImporter;
-    use crate::exec::runtime::debug_runtime;
+    use crate::binary::Module;
+    use crate::exec::env::DebugEnv;
+    use crate::exec::importer::Importer;
+    use crate::exec::store::Store;
     use crate::exec::value::Value;
     use crate::loader::parser::Parser;
     use crate::tests::wat2wasm;
 
     #[test]
-    fn simple() {
-        let wasm = wat2wasm(
-            r#"(module
-                       (import "env" "start" (func $start))
-                       (start $start)
-                   )"#,
-        )
-        .unwrap();
-        let mut parser = Parser::new(&wasm);
-        let module = parser.module().unwrap();
-        let mut runtime = debug_runtime(module).unwrap();
-        runtime.start().unwrap();
-    }
-
-    #[test]
-    fn instr() {
-        let wasm = wat2wasm(
-            r#"(module
-                       (func (export "main") (result i32)
-                           i32.const 10
-                           i32.const 20
-                           i32.add
-                       )
-                 )"#,
-        )
-        .unwrap();
-        let mut parser = Parser::new(&wasm);
-        let module = parser.module().unwrap();
-        let mut runtime = debug_runtime(module).unwrap();
-        assert_eq!(runtime.invoke("main", vec![]), Ok(vec![Value::I32(30)]))
-    }
-
-    #[test]
-    fn branch() {
-        let wasm = wat2wasm(
-            r#"(module
-                        (func (export "main") (result i32 i32 i32)
-                            (block (result i32 i32 i32)
-                                i32.const 0
-                                (block (result i32 i32)
-                                    i32.const 1
-                                    (block (param i32) (result i32)
-                                        i32.const 2
-                                        i32.add
-                                        i32.const 5
-                                        i32.const 6
-                                        br 2
-                                    )
-                                    i32.const 10
-                                )
-                             )
-                        )
-                    )"#,
-        )
-        .unwrap();
-        let mut parser = Parser::new(&wasm);
-        let module = parser.module().unwrap();
-        let mut runtime = debug_runtime(module).unwrap();
-        assert_eq!(
-            runtime.invoke("main", vec![]),
-            Ok(vec![Value::I32(3), Value::I32(5), Value::I32(6)])
-        );
-    }
-
-    #[test]
-    fn if_else() {
-        let wasm = wat2wasm(
-            r#"(module
-                    (func (export "main") (result i32)
-                        i32.const 0
-                        (if
-                            (then
-                                i32.const 1
-                            )
-                            (else
-                                i32.const 2
-                            )
-                        )
-                    )
-                )"#,
-        )
-        .unwrap();
-        let mut parser = Parser::new(&wasm);
-        let module = parser.module().unwrap();
-        let mut runtime = debug_runtime(module).unwrap();
-        assert_eq!(runtime.invoke("main", vec![]), Ok(vec![Value::I32(2)]));
-    }
-
-    #[test]
-    fn call_func() {
-        let wasm = wat2wasm(
-            r#"(module
-                    (func $triple (result i32 i32 i32)
-                        (block (result i32 i32 i32)
-                            i32.const 0
-                            (block (result i32 i32)
-                                i32.const 1
-                                (block (param i32) (result i32)
-                                    i32.const 2
-                                    i32.add
-                                    i32.const 5
-                                    i32.const 6
-                                    br 2
-                                )
-                                i32.const 10
-                            )
-                        )
-                    )
-                    (func (export "main") (result i32 i32 i32 i32 i32 i32)
-                         (block (result i32 i32 i32)
-                            i32.const 0
-                            (block (result i32 i32)
-                                i32.const 1
-                                (block (param i32) (result i32)
-                                    call $triple
-                                    i32.add
-                                    br 2
-                                )
-                                i32.const 10
-                            )
-                        )
-                        call $triple
-                    )
-            )"#,
-        )
-        .unwrap();
-
-        let mut parser = Parser::new(&wasm);
-        let module = parser.module().unwrap();
-        let mut runtime = debug_runtime(module).unwrap();
-        assert_eq!(
-            runtime.invoke("main", vec![]),
-            Ok(vec![
-                Value::I32(1),
-                Value::I32(3),
-                Value::I32(11),
-                Value::I32(3),
-                Value::I32(5),
-                Value::I32(6)
-            ])
-        );
-    }
-
-    #[test]
-    fn extern_module() {
-        let math = Parser::new(
-            &wat2wasm(
-                r#"(module
-                            (func (export "add") (param i32 i32) (result i32)
-                                local.get 0
-                                local.get 1
-                                i32.add
-                            )
-                        )"#,
-            )
-            .unwrap(),
-        )
-        .module()
-        .unwrap();
-
-        let main = Parser::new(
-            &wat2wasm(
-                r#"(module
-                            (import "math" "add" (func $add (param i32 i32) (result i32)))
-                            (func (export "main") (result i32)
-                                i32.const 2
-                                i32.const 4
-                                call $add
-                            )
-                        )"#,
-            )
-            .unwrap(),
-        )
-        .module()
-        .unwrap();
-
-        let mut importer = DefaultImporter::new();
-        importer.add_module(math, "math");
-
-        let mut runtime = Runtime::new(importer, DebugEnv {}, "env", main).unwrap();
-
-        assert_eq!(runtime.invoke("main", vec![]), Ok(vec![Value::I32(6)]));
-    }
-
-    #[test]
-    fn global_module() {
-        let inc = Parser::new(
-            &wat2wasm(
-                r#"(module
-                        (global $v (mut i32) (i32.const 0))
-                        (func (export "inc") (result i32)
-                            global.get $v
-                            i32.const 1
-                            i32.add
-                            global.set $v
-                            global.get $v
-                        )
-                    )"#,
-            )
-            .unwrap(),
-        )
-        .module()
-        .unwrap();
-
-        let main = Parser::new(
-            &wat2wasm(
-                r#"(module
-                        (import "inc" "inc" (func $inc (result i32)))
-                        (func (export "main") (result i32 i32 i32 i32 i32)
-                             call $inc
-                             call $inc
-                             call $inc
-                             call $inc
-                             call $inc
-                        )
-                    )"#,
-            )
-            .unwrap(),
-        )
-        .module()
-        .unwrap();
-
-        let mut importer = DefaultImporter::new();
-        importer.add_module(inc, "inc");
-
-        let mut runtime = Runtime::new(importer, DebugEnv {}, "env", main).unwrap();
-        assert_eq!(
-            runtime.invoke("main", vec![]),
-            Ok(vec![
-                Value::I32(1),
-                Value::I32(2),
-                Value::I32(3),
-                Value::I32(4),
-                Value::I32(5)
-            ])
-        );
-    }
-
-    #[test]
-    fn loop_behavior() {
-        let wasm = wat2wasm(
-            r#"(module
-                    (func $sum_bad (param $n i32) (result i32)  (local $i i32) (local $sum i32)
-                        (loop $loop
-                          (br_if $loop (i32.le_s (get_local $n) (get_local $i)))
-                          (set_local $sum (i32.add (get_local $sum) (get_local $i)))
-                          (set_local $i (i32.add (get_local $i) (i32.const 1))))
-                        (return (get_local $sum))
-                    )
-                    (func (export "main") (result i32)
-                        i32.const 10
-                        call $sum_bad
-                    )
-            )"#,
-        )
-        .unwrap();
-
-        let mut parser = Parser::new(&wasm);
-        let module = parser.module().unwrap();
-        let mut runtime = debug_runtime(module).unwrap();
-        assert_eq!(runtime.invoke("main", vec![]), Ok(vec![Value::I32(0)]));
-
-        let wasm = wat2wasm(
-            r#"(module
-                    (func $sum_good (param $n i32) (result i32)  (local $i i32) (local $sum i32)
-                        (loop $loop
-                            (set_local $sum (i32.add (get_local $sum) (get_local $i)))
-                            (set_local $i (i32.add (get_local $i) (i32.const 1)))
-                            (br_if $loop (i32.le_s (get_local $i) (get_local $n)))
-                        )
-                        (return (get_local $sum))
-                    )
-                    (func (export "main") (result i32)
-                        i32.const 10
-                        call $sum_good
-                    )
-            )"#,
-        )
-        .unwrap();
-
-        let mut parser = Parser::new(&wasm);
-        let module = parser.module().unwrap();
-        let mut runtime = debug_runtime(module).unwrap();
-        assert_eq!(runtime.invoke("main", vec![]), Ok(vec![Value::I32(55)]));
-    }
-
-    #[test]
-    fn table() {
-        let wasm = wat2wasm(
-            r#"(module
-                    (table 2 anyfunc)
-                    (func $f1 (result i32) i32.const 42)
-                    (func $f2 (result i32) i32.const 13)
-                    (type $return_i32 (func (result i32)))
-                    (elem (i32.const 0) $f1 $f2)
-
-                    (func (export "main") (result i32 i32)
-                        i32.const 1
-                        call_indirect (type $return_i32)
-                        i32.const 0
-                        call_indirect (type $return_i32)
-                    )
-            )"#,
-        )
-        .unwrap();
-
-        let mut parser = Parser::new(&wasm);
-        let module = parser.module().unwrap();
-        let mut runtime = debug_runtime(module).unwrap();
-        assert_eq!(
-            runtime.invoke("main", vec![]),
-            Ok(vec![Value::I32(13), Value::I32(42)])
-        );
-    }
-
-    #[test]
-    fn memory() {
-        let wasm = wat2wasm(
-            r#"(module
-                    ;; print(offset, length)
-                    (import "env" "print" (func $print (param i32 i32)))
-                    (memory 1)
-                    (export "memory" (memory 0))
-                    (data (i32.const 0) "hello world\n")
-                    (func (export "main")
-                        (call $print
-                            (i32.const 0)
-                            (i32.const 12)
-                        )
-                    )
-            )"#,
-        )
-        .unwrap();
-
-        let mut parser = Parser::new(&wasm);
-        let module = parser.module().unwrap();
-        #[derive(Debug)]
-        struct TestEnv {}
-        impl Env for TestEnv {
-            fn call(
-                &mut self,
-                name: &str,
-                params: Vec<Value>,
-                memory: Option<&mut crate::exec::store::MemInst>,
-            ) -> Result<Vec<Value>, crate::exec::env::EnvError> {
-                if name == "print" {
-                    let offset = i32::from(params[0]) as usize;
-                    let length = i32::from(params[1]) as usize;
-                    let memory = memory.as_ref().unwrap();
-                    assert_eq!(&memory.data[offset..(offset + length)], b"hello world\n");
-                }
-                Ok(vec![])
-            }
-        }
-        let mut runtime = Runtime::new(DefaultImporter::new(), TestEnv {}, "env", module).unwrap();
-
-        assert_eq!(runtime.invoke("main", vec![]), Ok(vec![]));
-
-        let wasm = wat2wasm(
-            r#"(module
-                    (memory 1)
-                    (global $x (mut i32) (i32.const -12))
-                    (func (export "main") (result i32)
-                       (memory.grow (memory.grow (i32.const 0)))
-                    )
-            )"#,
-        )
-        .unwrap();
-
-        let mut parser = Parser::new(&wasm);
-        let module = parser.module().unwrap();
-        let mut runtime = debug_runtime(module).unwrap();
-        assert_eq!(runtime.invoke("main", vec![]), Ok(vec![Value::I32(1)]));
-    }
-
-    #[test]
-    fn global() {
-        let wasm = wat2wasm(
-            r#"(module
-                    (global $x (mut i32) (i32.const -12))
-                    (func (export "set-x") (param i32) (global.set $x (local.get 0)))
-            )"#,
-        )
-        .unwrap();
-
-        let mut parser = Parser::new(&wasm);
-        let module = parser.module().unwrap();
-        let mut runtime = debug_runtime(module).unwrap();
-        assert_eq!(runtime.invoke("set-x", vec![Value::I32(6)]), Ok(vec![]));
-    }
-
-    #[test]
-    fn loop1() {
+    fn store() {
         let wasm = wat2wasm(
             r#"(module
                   (memory 1)
-                  (func (export "main") (result i32)
-                       i32.const 2
-                       memory.grow
-                       i32.const 0
-                       memory.grow
-                  )
+                  (global $x (mut i32) (i32.const -12))
+                  (table 2 anyfunc)
+                  (func $f1 (result i32) i32.const 42)
+                  (func $f2 (result i32) i32.const 13)
+                  (elem (i32.const 0) $f1 $f2)
+                  (data (i32.const 0) "hello world\n")
 
+                  (func (export "main") (result i32)
+                      i32.const 3
+                  )
                   )"#,
         )
         .unwrap();
         let mut parser = Parser::new(&wasm);
+
+        #[derive(Debug)]
+        struct TestImporter {
+            module: Module,
+        }
+        impl Importer for TestImporter {
+            fn import(&mut self, modname: &str) -> Option<crate::binary::Module> {
+                if modname == "debug" {
+                    Some(self.module.clone())
+                } else {
+                    None
+                }
+            }
+        }
+        let mut store = Store::new();
+
         let module = parser.module().unwrap();
-        let mut runtime = debug_runtime(module).unwrap();
-        assert_eq!(runtime.invoke("main", vec![]), Ok(vec![Value::I32(3)]));
+        let impoter = TestImporter { module };
+        let mut runtime = Runtime::without_module(impoter, DebugEnv {}, "env");
+        runtime.resister_module(&mut store, "debug").unwrap();
+        assert_eq!(
+            runtime.invoke(&mut store, "main", vec![]),
+            Ok(vec![Value::I32(3)])
+        );
+        store.free_runtime(runtime);
+        assert_eq!(store.funcs.to_vec().len(), 0);
+        assert_eq!(store.elems.to_vec().len(), 0);
+        assert_eq!(store.datas.to_vec().len(), 0);
+        assert_eq!(store.globals.to_vec().len(), 0);
+        assert_eq!(store.mems.to_vec().len(), 0);
+        assert_eq!(store.tables.to_vec().len(), 0);
     }
 }

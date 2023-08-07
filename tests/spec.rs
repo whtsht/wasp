@@ -9,6 +9,7 @@ use std::{
     path::PathBuf,
     process::Command,
 };
+use wasp::exec::store::Store;
 use wasp::exec::value::LittleEndian;
 use wasp::{
     binary::Module,
@@ -149,12 +150,16 @@ impl Env for SpecTestEnv {
     }
 }
 
-fn run_test(runtime: &mut Runtime<SpecTestEnv, DefaultImporter>, command: &TestCommand) {
+fn run_test(
+    runtime: &mut Runtime<SpecTestEnv, DefaultImporter>,
+    store: &mut Store,
+    command: &TestCommand,
+) {
     match command {
         TestCommand::AssertReturn { action, expected } => match action {
             Action::Invoke { fnname, args } => {
                 info!("{}({:?})", fnname, args);
-                let ret = runtime.invoke(fnname, args.clone()).unwrap();
+                let ret = runtime.invoke(store, fnname, args.clone()).unwrap();
                 assert_eq!(
                     &ret, expected,
                     "\nexpected {:?}, found {:?}\n fnname: {:?}",
@@ -164,15 +169,23 @@ fn run_test(runtime: &mut Runtime<SpecTestEnv, DefaultImporter>, command: &TestC
             }
         },
         TestCommand::Module { filename } => {
+            *store = Store::new();
             let module = get_module(&filename);
-            *runtime =
-                Runtime::new(DefaultImporter::new(), SpecTestEnv {}, "spectest", module).unwrap();
-            runtime.start().ok();
+            *runtime = Runtime::new(
+                store,
+                DefaultImporter::new(),
+                SpecTestEnv {},
+                "spectest",
+                module,
+                "debug",
+            )
+            .unwrap();
+            runtime.start(store).ok();
         }
         TestCommand::Action { action } => match action {
             Action::Invoke { fnname, args } => {
                 info!("{}: {:?}", fnname, args);
-                runtime.invoke(fnname, args.clone()).unwrap();
+                runtime.invoke(store, fnname, args.clone()).unwrap();
             }
         },
     }
@@ -220,8 +233,9 @@ pub fn run_tests() {
 
                 let mut runtime =
                     Runtime::without_module(DefaultImporter::new(), SpecTestEnv {}, "spectes");
+                let mut store = Store::new();
                 for command in commands.iter() {
-                    run_test(&mut runtime, command);
+                    run_test(&mut runtime, &mut store, command);
                 }
             }
         }

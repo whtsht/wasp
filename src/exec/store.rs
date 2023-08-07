@@ -1,5 +1,8 @@
+use super::env::Env;
+use super::importer::Importer;
 use super::memory::{data_active, data_passiv};
-use super::runtime::{eval_const, Addr, RuntimeError, PAGE_SIZE};
+use super::opt_vec::OptVec;
+use super::runtime::{eval_const, Addr, Runtime, RuntimeError, PAGE_SIZE};
 use super::table::{elem_active, elem_passiv};
 use super::value::{Ref, Value};
 use crate::binary::FuncType;
@@ -64,28 +67,28 @@ pub struct DataInst {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Store {
-    pub globals: Vec<GlobalInst>,
-    pub tables: Vec<TableInst>,
-    pub elems: Vec<ElemInst>,
-    pub mems: Vec<MemInst>,
-    pub funcs: Vec<FuncInst>,
-    pub datas: Vec<DataInst>,
+    pub globals: OptVec<GlobalInst>,
+    pub tables: OptVec<TableInst>,
+    pub mems: OptVec<MemInst>,
+    pub funcs: OptVec<FuncInst>,
+    pub elems: OptVec<ElemInst>,
+    pub datas: OptVec<DataInst>,
 }
 
 impl Store {
     pub fn new() -> Self {
         Self {
-            funcs: vec![],
-            globals: vec![],
-            tables: vec![],
-            elems: vec![],
-            mems: vec![],
-            datas: vec![],
+            funcs: OptVec::new(),
+            globals: OptVec::new(),
+            tables: OptVec::new(),
+            mems: OptVec::new(),
+            elems: OptVec::new(),
+            datas: OptVec::new(),
         }
     }
 
-    pub fn update_func_inst(&mut self, funcaddrs: Vec<Addr>, instance_addr: Addr) {
-        for funcaddr in funcaddrs {
+    pub fn update_func_inst(&mut self, funcaddrs: &Vec<Addr>, instance_addr: Addr) {
+        for &funcaddr in funcaddrs {
             match &mut self.funcs[funcaddr as usize] {
                 FuncInst::InnerFunc {
                     instance_addr: addr,
@@ -99,11 +102,10 @@ impl Store {
     }
 
     pub fn allocate_global(&mut self, global: Global) -> Result<Addr, RuntimeError> {
-        self.globals.push(GlobalInst {
+        Ok(self.globals.push(GlobalInst {
             globaltype: global.type_,
             value: eval_const(&global.value)?,
-        });
-        Ok(self.globals.len() - 1)
+        }))
     }
 
     pub fn allocate_table(&mut self, table: Table) -> Addr {
@@ -111,16 +113,12 @@ impl Store {
         self.tables.push(TableInst {
             tabletype: table,
             elem: vec![Ref::Null; min],
-        });
-        self.tables.len() - 1
+        })
     }
 
     pub fn allocate_elem(&mut self, elem: Elem) -> Result<Option<Addr>, RuntimeError> {
         match &elem.mode {
-            ElemMode::Passiv => {
-                elem_passiv(&mut self.elems, elem)?;
-                Ok(Some(self.elems.len() - 1))
-            }
+            ElemMode::Passiv => Ok(Some(elem_passiv(&mut self.elems, elem)?)),
             ElemMode::Active { tableidx, offset } => {
                 let offset = match eval_const(&offset)? {
                     Value::I32(v) => v,
@@ -138,8 +136,7 @@ impl Store {
         self.mems.push(MemInst {
             limits: mem.0.clone(),
             data: vec![0; min * PAGE_SIZE],
-        });
-        self.mems.len() - 1
+        })
     }
 
     pub fn allocate_data(&mut self, data: Data) -> Result<Option<Addr>, RuntimeError> {
@@ -152,6 +149,29 @@ impl Store {
                 } as usize;
                 data_active(&mut self.mems[*memidx as usize], data, offset);
                 Ok(None)
+            }
+        }
+    }
+
+    pub fn free_runtime<E: Env, I: Importer>(&mut self, runtime: Runtime<E, I>) {
+        for inst in runtime.instances() {
+            for faddr in inst.funcaddrs {
+                self.funcs.remove(faddr);
+            }
+            for daddr in inst.dataaddrs {
+                self.datas.remove(daddr);
+            }
+            for eaddr in inst.elemaddrs {
+                self.elems.remove(eaddr);
+            }
+            for gaddr in inst.globaladdrs {
+                self.globals.remove(gaddr);
+            }
+            for taddr in inst.tableaddrs {
+                self.tables.remove(taddr);
+            }
+            if let Some(maddr) = inst.memaddr {
+                self.mems.remove(maddr);
             }
         }
     }

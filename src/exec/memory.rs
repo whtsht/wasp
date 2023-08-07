@@ -1,4 +1,5 @@
 use super::{
+    opt_vec::OptVec,
     runtime::{Addr, Instance},
     stack::Stack,
     store::{DataInst, MemInst, Store},
@@ -181,14 +182,11 @@ pub fn memory_init(
 
 pub fn data_drop(x: &u32, instance: &mut Instance, store: &mut Store) {
     let a = instance.dataaddrs[*x as usize];
-    // TODO
-    // drop store.datas[a]
-    let _ = &store.datas[a];
+    store.datas.remove(a);
 }
 
-pub fn data_passiv(datas: &mut Vec<DataInst>, data: Data) -> Addr {
-    datas.push(DataInst { data: data.init });
-    datas.len() - 1
+pub fn data_passiv(datas: &mut OptVec<DataInst>, data: Data) -> Addr {
+    datas.push(DataInst { data: data.init })
 }
 
 pub fn data_active(mem: &mut MemInst, data: Data, offset: usize) {
