@@ -10,6 +10,7 @@ use std::{
     process::Command,
 };
 use wasp::exec::importer::Importer;
+use wasp::exec::runtime::RuntimeError;
 use wasp::exec::store::Store;
 use wasp::exec::value::LittleEndian;
 use wasp::{
@@ -35,6 +36,10 @@ enum TestCommand<'a> {
     AssertReturn {
         action: Action<'a>,
         expected: Vec<WValue>,
+    },
+    AssertTrap {
+        action: Action<'a>,
+        text: &'a str,
     },
     Module {
         filename: &'a str,
@@ -64,6 +69,10 @@ impl<'a> TestCommand<'a> {
             }),
             "action" => Some(TestCommand::Action {
                 action: Action::from_value(v.get("action").unwrap())?,
+            }),
+            "assert_trap" => Some(TestCommand::AssertTrap {
+                action: Action::from_value(v.get("action").unwrap())?,
+                text: v.get("text").unwrap().as_str().unwrap(),
             }),
             _ => None,
         }
@@ -185,6 +194,18 @@ fn run_test(
             Action::Invoke { fnname, args } => {
                 info!("{}: {:?}", fnname, args);
                 runtime.invoke(store, env, fnname, args.clone()).unwrap();
+            }
+        },
+        TestCommand::AssertTrap { action, text } => match action {
+            Action::Invoke { fnname, args } => {
+                info!("{}({:?})", fnname, args);
+                match runtime.invoke(store, env, fnname, args.clone()) {
+                    Err(RuntimeError::Trap(trap)) => {
+                        assert_eq!(&format!("{}", trap), text);
+                        info!("    => trap: {}", text);
+                    }
+                    _ => todo!(),
+                }
             }
         },
     }

@@ -131,13 +131,13 @@ pub fn step<E: Env>(
             let ft = &instance.types[*typeidx as usize];
             let i = stack.pop_value::<i32>() as usize;
             if i >= tab.elem.len() {
-                return Err(Trap::TableOutOfRange);
+                return Err(Trap::UndefinedElement);
             }
             let r = tab.elem[i];
             if let Ref::Func(a) = r {
                 let func = &store.funcs[a];
                 if func.functype() != ft {
-                    return Err(Trap::FuncTypeNotMatch(ft.clone(), func.functype().clone()));
+                    return Err(Trap::IndirectCallTypeMismatch);
                 }
                 if let Some(pc) = attach(
                     func,
@@ -277,29 +277,41 @@ pub fn step<E: Env>(
         Instr::I32DivU => stack.binop_trap(|a: i32, b| {
             (a as u32)
                 .checked_div(b as u32)
-                .ok_or(Trap::DivByZero)
+                .ok_or(Trap::DivideByZeroInt)
                 .map(|r| r as i32)
         })?,
         Instr::I64DivU => stack.binop_trap(|a: i64, b| {
             (a as u64)
                 .checked_div(b as u64)
-                .ok_or(Trap::DivByZero)
+                .ok_or(Trap::DivideByZeroInt)
                 .map(|r| r as i64)
         })?,
         // idiv_s_N
-        Instr::I32DivS => stack.binop_trap(|a: i32, b| a.checked_div(b).ok_or(Trap::DivByZero))?,
-        Instr::I64DivS => stack.binop_trap(|a: i64, b| a.checked_div(b).ok_or(Trap::DivByZero))?,
+        Instr::I32DivS => stack.binop_trap(|a: i32, b| {
+            if b == 0 {
+                Err(Trap::DivideByZeroInt)
+            } else {
+                a.checked_div(b).ok_or(Trap::IntegerOverflow)
+            }
+        })?,
+        Instr::I64DivS => stack.binop_trap(|a: i64, b| {
+            if b == 0 {
+                Err(Trap::DivideByZeroInt)
+            } else {
+                a.checked_div(b).ok_or(Trap::IntegerOverflow)
+            }
+        })?,
         // irem_u_N
         Instr::I32RemU => stack.binop_trap(|a: i32, b| {
             if b == 0 {
-                Err(Trap::DivByZero)
+                Err(Trap::DivideByZeroInt)
             } else {
                 Ok((a as u32).wrapping_rem(b as u32) as i32)
             }
         })?,
         Instr::I64RemU => stack.binop_trap(|a: i64, b| {
             if b == 0 {
-                Err(Trap::DivByZero)
+                Err(Trap::DivideByZeroInt)
             } else {
                 Ok((a as u64).wrapping_rem(b as u64) as i64)
             }
@@ -307,14 +319,14 @@ pub fn step<E: Env>(
         // irem_s_N
         Instr::I32RemS => stack.binop_trap(|a: i32, b| {
             if b == 0 {
-                Err(Trap::DivByZero)
+                Err(Trap::DivideByZeroInt)
             } else {
                 Ok(a.wrapping_rem(b))
             }
         })?,
         Instr::I64RemS => stack.binop_trap(|a: i64, b| {
             if b == 0 {
-                Err(Trap::DivByZero)
+                Err(Trap::DivideByZeroInt)
             } else {
                 Ok(a.wrapping_rem(b))
             }
@@ -488,38 +500,14 @@ pub fn step<E: Env>(
         Instr::I64ExtendI32U => stack.cvtop(|v: i32| v as u32 as i64),
         Instr::I64ExtendI32S => stack.cvtop(|v: i32| v as i64),
         Instr::I32WrapI64 => stack.cvtop(|v: i64| v as i32),
-        Instr::I32TruncF32U => stack.cvtop_trap(|v: f32| match cast::f32_to_u32(v) {
-            Some(u) => Ok(u as i32),
-            None => Err(Trap::OutOfRange),
-        })?,
-        Instr::I32TruncF64U => stack.cvtop_trap(|v: f64| match cast::f64_to_u32(v) {
-            Some(u) => Ok(u as i32),
-            None => Err(Trap::OutOfRange),
-        })?,
-        Instr::I64TruncF32U => stack.cvtop_trap(|v: f32| match cast::f32_to_u64(v) {
-            Some(u) => Ok(u as i64),
-            None => Err(Trap::OutOfRange),
-        })?,
-        Instr::I64TruncF64U => stack.cvtop_trap(|v: f64| match cast::f64_to_u64(v) {
-            Some(u) => Ok(u as i64),
-            None => Err(Trap::OutOfRange),
-        })?,
-        Instr::I32TruncF32S => stack.cvtop_trap(|v: f32| match cast::f32_to_i32(v) {
-            Some(u) => Ok(u),
-            None => Err(Trap::OutOfRange),
-        })?,
-        Instr::I32TruncF64S => stack.cvtop_trap(|v: f64| match cast::f64_to_i32(v) {
-            Some(u) => Ok(u),
-            None => Err(Trap::OutOfRange),
-        })?,
-        Instr::I64TruncF32S => stack.cvtop_trap(|v: f32| match cast::f32_to_i64(v) {
-            Some(u) => Ok(u),
-            None => Err(Trap::OutOfRange),
-        })?,
-        Instr::I64TruncF64S => stack.cvtop_trap(|v: f64| match cast::f64_to_i64(v) {
-            Some(u) => Ok(u),
-            None => Err(Trap::OutOfRange),
-        })?,
+        Instr::I32TruncF32U => stack.cvtop_trap(|v: f32| cast::f32_to_u32(v).map(|v| v as i32))?,
+        Instr::I32TruncF64U => stack.cvtop_trap(|v: f64| cast::f64_to_u32(v).map(|v| v as i32))?,
+        Instr::I64TruncF32U => stack.cvtop_trap(|v: f32| cast::f32_to_u64(v).map(|v| v as i64))?,
+        Instr::I64TruncF64U => stack.cvtop_trap(|v: f64| cast::f64_to_u64(v).map(|v| v as i64))?,
+        Instr::I32TruncF32S => stack.cvtop_trap(cast::f32_to_i32)?,
+        Instr::I32TruncF64S => stack.cvtop_trap(cast::f64_to_i32)?,
+        Instr::I64TruncF32S => stack.cvtop_trap(cast::f32_to_i64)?,
+        Instr::I64TruncF64S => stack.cvtop_trap(cast::f64_to_i64)?,
         Instr::F64PromoteF32 => stack.cvtop(|v: f32| v as f64),
         Instr::F32DemoteF64 => stack.cvtop(|v: f64| v as f32),
         Instr::F32ConvertI32U => stack.cvtop(|v: i32| v as u32 as f32),

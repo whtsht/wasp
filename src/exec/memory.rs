@@ -23,10 +23,12 @@ macro_rules! impl_load {
             let a = instance.memaddr.unwrap();
             let mem = &store.mems[a];
             let i = stack.pop_value::<i32>() as usize;
-            let ea = i + memarg.offset as usize;
+            let ea = i
+                .checked_add(memarg.offset as usize)
+                .ok_or(Trap::MemoryOutOfBounds)?;
             const SIZE: usize = core::mem::size_of::<$sx>();
-            if ea + SIZE > mem.data.len() {
-                return Err(Trap::MemoryOutOfRange);
+            if ea.checked_add(SIZE).ok_or(Trap::MemoryOutOfBounds)? > mem.data.len() {
+                return Err(Trap::MemoryOutOfBounds);
             }
             let c: $sx = LittleEndian::read(&mem.data, ea);
             stack.push_value(c as $t);
@@ -62,10 +64,12 @@ macro_rules! impl_store {
             let mem = &mut store.mems[a];
             let c = stack.pop_value::<$t>();
             let i = stack.pop_value::<i32>() as usize;
-            let ea = i + memarg.offset as usize;
+            let ea = i
+                .checked_add(memarg.offset as usize)
+                .ok_or(Trap::MemoryOutOfBounds)?;
             const SIZE: usize = core::mem::size_of::<$sx>();
-            if ea + SIZE > mem.data.len() {
-                return Err(Trap::MemoryOutOfRange);
+            if ea.checked_add(SIZE).ok_or(Trap::MemoryOutOfBounds)? > mem.data.len() {
+                return Err(Trap::MemoryOutOfBounds);
             }
             LittleEndian::write(&mut mem.data, ea, c as $sx);
             Ok(())
@@ -119,7 +123,7 @@ pub fn memory_fill(instance: &Instance, store: &mut Store, stack: &mut Stack) ->
     let val = stack.pop_value::<i32>();
     let d = stack.pop_value::<i32>() as usize;
     if d + n > mem.data.len() {
-        return Err(Trap::MemoryOutOfRange);
+        return Err(Trap::MemoryOutOfBounds);
     }
     if n == 0 {
         return Ok(());
@@ -138,7 +142,7 @@ pub fn memory_copy(instance: &Instance, store: &mut Store, stack: &mut Stack) ->
     let d = stack.pop_value::<i32>() as usize;
 
     if s + n > mem.data.len() || d + n > mem.data.len() {
-        return Err(Trap::MemoryOutOfRange);
+        return Err(Trap::MemoryOutOfBounds);
     }
     if n == 0 {
         return Ok(());
@@ -169,7 +173,7 @@ pub fn memory_init(
     let s = stack.pop_value::<i32>() as usize;
     let d = stack.pop_value::<i32>() as usize;
     if s + n > data.data.len() || d + n > mem.data.len() {
-        return Err(Trap::MemoryOutOfRange);
+        return Err(Trap::MemoryOutOfBounds);
     }
     if n == 0 {
         return Ok(());
