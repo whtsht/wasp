@@ -9,11 +9,12 @@ use std::{
     path::PathBuf,
     process::Command,
 };
+use wasp::exec::importer::Importer;
 use wasp::exec::store::Store;
 use wasp::exec::value::LittleEndian;
 use wasp::{
     binary::Module,
-    exec::{env::Env, importer::DefaultImporter, runtime::Runtime, value::Value as WValue},
+    exec::{env::Env, runtime::Runtime, value::Value as WValue},
     loader::parser::Parser,
 };
 
@@ -128,15 +129,17 @@ fn get_test_case<'a>(v: &'a Value) -> Vec<TestCommand<'a>> {
         .collect()
 }
 
-fn get_module(filename: &str) -> Module {
-    let mut file = File::open(&format!("{}/{}", WAST_DIR, filename)).unwrap();
-    let mut buf = vec![];
-    file.read_to_end(&mut buf).unwrap();
-    let mut parser = Parser::new(&buf);
-    parser.module().unwrap()
+struct SpecTestImporter {}
+impl Importer for SpecTestImporter {
+    fn import(&mut self, modname: &str) -> Option<Module> {
+        let mut file = File::open(&format!("{}/{}", WAST_DIR, modname)).unwrap();
+        let mut buf = vec![];
+        file.read_to_end(&mut buf).unwrap();
+        let mut parser = Parser::new(&buf);
+        Some(parser.module().unwrap())
+    }
 }
 
-#[derive(Debug)]
 struct SpecTestEnv {}
 impl Env for SpecTestEnv {
     fn call(
@@ -151,15 +154,16 @@ impl Env for SpecTestEnv {
 }
 
 fn run_test(
-    runtime: &mut Runtime<SpecTestEnv, DefaultImporter>,
+    runtime: &mut Runtime,
     store: &mut Store,
+    env: &mut SpecTestEnv,
     command: &TestCommand,
 ) {
     match command {
         TestCommand::AssertReturn { action, expected } => match action {
             Action::Invoke { fnname, args } => {
                 info!("{}({:?})", fnname, args);
-                let ret = runtime.invoke(store, fnname, args.clone()).unwrap();
+                let ret = runtime.invoke(store, env, fnname, args.clone()).unwrap();
                 assert_eq!(
                     &ret, expected,
                     "\nexpected {:?}, found {:?}\n fnname: {:?}",
@@ -170,22 +174,17 @@ fn run_test(
         },
         TestCommand::Module { filename } => {
             *store = Store::new();
-            let module = get_module(&filename);
-            *runtime = Runtime::new(
-                store,
-                DefaultImporter::new(),
-                SpecTestEnv {},
-                "spectest",
-                module,
-                "debug",
-            )
-            .unwrap();
-            runtime.start(store).ok();
+            *runtime = Runtime::new("spectest");
+            let mut importer = SpecTestImporter {};
+            runtime
+                .resister_module(store, &mut importer, &filename)
+                .unwrap();
+            runtime.start(store, env).ok();
         }
         TestCommand::Action { action } => match action {
             Action::Invoke { fnname, args } => {
                 info!("{}: {:?}", fnname, args);
-                runtime.invoke(store, fnname, args.clone()).unwrap();
+                runtime.invoke(store, env, fnname, args.clone()).unwrap();
             }
         },
     }
@@ -231,11 +230,11 @@ pub fn run_tests() {
                 let v: Value = serde_json::from_str(&content).unwrap();
                 let commands = get_test_case(&v);
 
-                let mut runtime =
-                    Runtime::without_module(DefaultImporter::new(), SpecTestEnv {}, "spectes");
+                let mut runtime = Runtime::new("spectest");
                 let mut store = Store::new();
+                let mut env = SpecTestEnv {};
                 for command in commands.iter() {
-                    run_test(&mut runtime, &mut store, command);
+                    run_test(&mut runtime, &mut store, &mut env, command);
                 }
             }
         }

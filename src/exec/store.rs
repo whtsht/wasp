@@ -1,5 +1,3 @@
-use super::env::Env;
-use super::importer::Importer;
 use super::memory::{data_active, data_passiv};
 use super::opt_vec::OptVec;
 use super::runtime::{eval_const, Addr, Runtime, RuntimeError, PAGE_SIZE};
@@ -153,7 +151,7 @@ impl Store {
         }
     }
 
-    pub fn free_runtime<E: Env, I: Importer>(&mut self, runtime: Runtime<E, I>) {
+    pub fn free_runtime(&mut self, runtime: Runtime) {
         for inst in runtime.instances() {
             for faddr in inst.funcaddrs {
                 self.funcs.remove(faddr);
