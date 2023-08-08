@@ -9,6 +9,7 @@ pub enum Trap {
     TableNullRef,
     MemoryOutOfBounds,
     IndirectCallTypeMismatch,
+    NoStartFunction,
     NotFundRef,
     Env(&'static str),
 }
@@ -26,6 +27,7 @@ impl core::fmt::Display for Trap {
             Trap::MemoryOutOfBounds => write!(f, "out of bounds memory access"),
             Trap::NotFundRef => write!(f, "attempted to call null or external reference"),
             Trap::IndirectCallTypeMismatch => write!(f, "indirect call type mismatch"),
+            Trap::NoStartFunction => write!(f, "no start function"),
             Trap::Env(env) => write!(f, "environment error: {}", env),
         }
     }

@@ -1,7 +1,6 @@
-use super::env::Env;
-use super::runtime::Instance;
+use super::runtime::{InnerExecState, Instance};
 use super::stack::{Frame, Label, Stack};
-use super::store::{FuncInst, MemInst, Store};
+use super::store::{FuncInst, Store};
 use super::table::*;
 use super::trap::Trap;
 use super::value::{Ref, Value};
@@ -13,14 +12,13 @@ use crate::lib::*;
 use core::ops::Neg;
 use num_traits::float::Float;
 
-pub fn step<E: Env>(
-    env: &mut E,
+pub fn step(
     instances: &mut Vec<Instance>,
     instrs: &Vec<Instr>,
     pc: usize,
     store: &mut Store,
     stack: &mut Stack,
-) -> Result<Option<usize>, Trap> {
+) -> Result<InnerExecState, Trap> {
     let frame = stack.top_frame().clone();
     let instance = &mut instances[frame.instance_addr];
     match &instrs[pc] {
@@ -65,28 +63,32 @@ pub fn step<E: Env>(
                     pc: end_offset + pc,
                     cont: false,
                 });
-                return Ok(Some(else_offset + pc));
+                return Ok(InnerExecState::Continue(else_offset + pc));
             } else {
-                return Ok(Some(end_offset + pc));
+                return Ok(InnerExecState::Continue(end_offset + pc));
             }
         }
         Instr::Br(l) => {
             if *l as usize >= stack.labels_len() {
-                let new_pc = unwind_stack(&frame, stack);
-                return Ok(new_pc);
+                return match unwind_stack(&frame, stack) {
+                    Some(new_pc) => Ok(InnerExecState::Continue(new_pc)),
+                    None => Ok(InnerExecState::Return),
+                };
             }
             let new_pc = stack.jump(*l as usize);
-            return Ok(Some(new_pc));
+            return Ok(InnerExecState::Continue(new_pc));
         }
         Instr::BrIf(l) => {
             let c = stack.pop_value::<i32>();
             if c != 0 {
                 if *l as usize >= stack.labels_len() {
-                    let new_pc = unwind_stack(&frame, stack);
-                    return Ok(new_pc);
+                    return match unwind_stack(&frame, stack) {
+                        Some(new_pc) => Ok(InnerExecState::Continue(new_pc)),
+                        None => Ok(InnerExecState::Return),
+                    };
                 }
                 let new_pc = stack.jump(*l as usize);
-                return Ok(Some(new_pc));
+                return Ok(InnerExecState::Continue(new_pc));
             }
         }
         Instr::BrTable { indexs, default } => {
@@ -94,36 +96,35 @@ pub fn step<E: Env>(
             return if i < indexs.len() {
                 let l = indexs[i] as usize;
                 if l >= stack.labels_len() {
-                    let new_pc = unwind_stack(&frame, stack);
-                    return Ok(new_pc);
+                    return match unwind_stack(&frame, stack) {
+                        Some(new_pc) => Ok(InnerExecState::Continue(new_pc)),
+                        None => Ok(InnerExecState::Return),
+                    };
                 }
                 let new_pc = stack.jump(indexs[i] as usize);
-                Ok(Some(new_pc))
+                Ok(InnerExecState::Continue(new_pc))
             } else {
                 let l = *default as usize;
                 if l >= stack.labels_len() {
-                    let new_pc = unwind_stack(&frame, stack);
-                    return Ok(new_pc);
+                    return match unwind_stack(&frame, stack) {
+                        Some(new_pc) => Ok(InnerExecState::Continue(new_pc)),
+                        None => Ok(InnerExecState::Return),
+                    };
                 }
                 let new_pc = stack.jump(l as usize);
-                return Ok(Some(new_pc));
+                return Ok(InnerExecState::Continue(new_pc));
             };
         }
         Instr::Return => {
-            let new_pc = unwind_stack(&frame, stack);
-            return Ok(new_pc);
+            return match unwind_stack(&frame, stack) {
+                Some(new_pc) => Ok(InnerExecState::Continue(new_pc)),
+                None => Ok(InnerExecState::Return),
+            };
         }
         Instr::Call(a) => {
             let func = &store.funcs[*a as usize];
-            if let Some(pc) = attach(
-                func,
-                stack,
-                instance.memaddr.map(|a| &mut store.mems[a]),
-                env,
-                pc,
-            )? {
-                return Ok(Some(pc));
-            }
+
+            return attach(func, stack, pc);
         }
         Instr::CallIndirect(typeidx, tableidx) => {
             let ta = instance.tableaddrs[*tableidx as usize];
@@ -139,15 +140,7 @@ pub fn step<E: Env>(
                 if func.functype() != ft {
                     return Err(Trap::IndirectCallTypeMismatch);
                 }
-                if let Some(pc) = attach(
-                    func,
-                    stack,
-                    instance.memaddr.map(|a| &mut store.mems[a]),
-                    env,
-                    pc,
-                )? {
-                    return Ok(Some(pc));
-                }
+                return attach(func, stack, pc);
             } else {
                 return Err(Trap::NotFundRef);
             }
@@ -547,12 +540,12 @@ pub fn step<E: Env>(
         //////////////////////////
         // Pseudo Instructions ///
         //////////////////////////
-        Instr::RJump(r) => return Ok(Some(*r + pc)),
+        Instr::RJump(r) => return Ok(InnerExecState::Continue(*r + pc)),
         Instr::PopLabel => {
             stack.pop_label();
         }
     }
-    Ok(Some(pc + 1))
+    Ok(InnerExecState::Continue(pc + 1))
 }
 
 pub fn unwind_stack(frame: &Frame, stack: &mut Stack) -> Option<usize> {
@@ -573,13 +566,7 @@ pub fn unwind_stack(frame: &Frame, stack: &mut Stack) -> Option<usize> {
     }
 }
 
-pub fn attach<E: Env>(
-    func: &FuncInst,
-    stack: &mut Stack,
-    memory: Option<&mut MemInst>,
-    env: &mut E,
-    pc: usize,
-) -> Result<Option<usize>, Trap> {
+pub fn attach(func: &FuncInst, stack: &mut Stack, pc: usize) -> Result<InnerExecState, Trap> {
     match func {
         FuncInst::HostFunc { name, functype } => {
             let mut local = vec![];
@@ -587,13 +574,11 @@ pub fn attach<E: Env>(
                 local.push(stack.pop_value());
             }
             local.reverse();
-            let results = env
-                .call(name.as_str(), local, memory)
-                .map_err(|err| Trap::Env(err))?;
-            for result in results {
-                stack.push_value(result);
-            }
-            Ok(None)
+
+            Ok(InnerExecState::EnvFunc {
+                name: name.clone(),
+                params: local,
+            })
         }
         FuncInst::InnerFunc {
             instance_addr,
@@ -623,7 +608,7 @@ pub fn attach<E: Env>(
                 pc: pc + 1,
             };
             stack.push_frame(new_frame);
-            Ok(Some(*start))
+            Ok(InnerExecState::Continue(*start))
         }
     }
 }
@@ -634,7 +619,6 @@ mod tests {
     use crate::{
         binary::Instr,
         exec::{
-            env::DebugEnv,
             runtime::Instance,
             stack::{Frame, Stack},
             store::Store,
@@ -649,9 +633,8 @@ mod tests {
         store: &mut Store,
         instances: &mut Vec<Instance>,
     ) -> Result<(), Trap> {
-        let mut env = DebugEnv {};
         for pc in 0..instrs.len() {
-            step(&mut env, instances, instrs, pc, store, stack).map(|_| ())?;
+            step(instances, instrs, pc, store, stack).map(|_| ())?;
         }
         Ok(())
     }
