@@ -64,6 +64,7 @@ pub enum RuntimeError {
     NotFound(ImportType),
     Env(EnvError),
     ConstantExpression,
+    NoStartFunction,
     Trap(Trap),
 }
 
@@ -410,6 +411,65 @@ impl Runtime {
                             .map_err(|trap| RuntimeError::Trap(trap))
                     } else {
                         Ok(self.stack.get_returns())
+                    }
+                }
+                _ => Err(RuntimeError::NotFound(ImportType::Func(name.into()))),
+            }
+        } else {
+            Err(RuntimeError::NotFound(ImportType::Func(name.into())))
+        }
+    }
+
+    pub fn attach_start<E: Env>(
+        &mut self,
+        store: &mut Store,
+        env: &mut E,
+    ) -> Result<ExecState, RuntimeError> {
+        let instance = &self.instances[self.root];
+        self.stack = Stack::new();
+        if let Some(index) = instance.start {
+            let func = &store.funcs[index];
+            let memory = instance.memaddr.map(|a| &mut store.mems[a]);
+            if let Some(start) = attach(func, &mut self.stack, memory, env, self.pc)
+                .map_err(|trap| RuntimeError::Trap(trap))?
+            {
+                self.pc = start;
+                Ok(ExecState::Continue)
+            } else {
+                Ok(ExecState::Terminate)
+            }
+        } else {
+            Err(RuntimeError::NoStartFunction)
+        }
+    }
+
+    pub fn attach_invoke<E: Env>(
+        &mut self,
+        store: &mut Store,
+        env: &mut E,
+        name: &str,
+        params: Vec<Value>,
+    ) -> Result<Option<Vec<Value>>, RuntimeError> {
+        let instance = &self.instances[self.root];
+        self.stack = Stack::new();
+        if let Some(export) = instance
+            .exports
+            .iter()
+            .filter(|export| &export.name == name)
+            .next()
+        {
+            match export.desc {
+                ExportDesc::Func(index) => {
+                    let func = &store.funcs[instance.funcaddrs[index as usize]];
+                    let memory = instance.memaddr.map(|a| &mut store.mems[a]);
+                    self.stack.extend_values(params);
+                    if let Some(start) = attach(func, &mut self.stack, memory, env, self.pc)
+                        .map_err(|trap| RuntimeError::Trap(trap))?
+                    {
+                        self.pc = start;
+                        Ok(None)
+                    } else {
+                        Ok(Some(self.stack.get_returns()))
                     }
                 }
                 _ => Err(RuntimeError::NotFound(ImportType::Func(name.into()))),
