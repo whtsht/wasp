@@ -1,5 +1,3 @@
-use super::env::EnvError;
-
 #[derive(Debug, PartialEq, Eq)]
 pub enum Trap {
     Unreachable,
@@ -12,7 +10,7 @@ pub enum Trap {
     MemoryOutOfBounds,
     IndirectCallTypeMismatch,
     NotFundRef,
-    Env(EnvError),
+    Env(&'static str),
 }
 
 impl core::fmt::Display for Trap {
@@ -28,7 +26,7 @@ impl core::fmt::Display for Trap {
             Trap::MemoryOutOfBounds => write!(f, "out of bounds memory access"),
             Trap::NotFundRef => write!(f, "attempted to call null or external reference"),
             Trap::IndirectCallTypeMismatch => write!(f, "indirect call type mismatch"),
-            Trap::Env(env) => write!(f, "environment error: {:?}", env),
+            Trap::Env(env) => write!(f, "environment error: {}", env),
         }
     }
 }

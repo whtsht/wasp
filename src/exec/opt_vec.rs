@@ -71,7 +71,7 @@ mod tests {
 
     #[test]
     fn ok() {
-        let mut v = OptVec::new();
+        let mut v: OptVec<i32> = OptVec::new();
         assert_eq!(v.push(1), 0);
         assert_eq!(v.push(2), 1);
         assert_eq!(v.push(3), 2);
@@ -80,7 +80,7 @@ mod tests {
 
         assert_eq!(v.pop(), Some(5));
         assert_eq!(v.inner, vec![Some(1), Some(2), Some(3), Some(4)]);
-        assert_eq!(v.free, vec![]);
+        assert_eq!(v.free, vec![] as Vec<usize>);
 
         assert_eq!(v.remove(1), Some(2));
         assert_eq!(v.inner, vec![Some(1), None, Some(3), Some(4)]);
@@ -92,7 +92,7 @@ mod tests {
 
         assert_eq!(v.push(5), 1);
         assert_eq!(v.inner, vec![Some(1), Some(5), Some(3), Some(4)]);
-        assert_eq!(v.free, vec![]);
+        assert_eq!(v.free, vec![] as Vec<usize>);
     }
 
     #[should_panic]

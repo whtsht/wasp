@@ -1,7 +1,7 @@
 #[cfg(not(feature = "std"))]
 use crate::lib::*;
 
-use super::env::{Env, EnvError};
+use super::env::Env;
 use super::importer::Importer;
 use super::instr::{attach, step};
 use super::stack::Stack;
@@ -62,7 +62,7 @@ pub struct Runtime {
 pub enum RuntimeError {
     ModuleNotFound(String),
     NotFound(ImportType),
-    Env(EnvError),
+    Env(&'static str),
     ConstantExpression,
     NoStartFunction,
     Trap(Trap),

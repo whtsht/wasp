@@ -156,7 +156,7 @@ impl Env for SpecTestEnv {
         name: &str,
         _params: Vec<WValue>,
         _memory: Option<&mut wasp::exec::store::MemInst>,
-    ) -> Result<Vec<WValue>, wasp::exec::env::EnvError> {
+    ) -> Result<Vec<WValue>, &'static str> {
         if name == "print" {}
         Ok(vec![])
     }
