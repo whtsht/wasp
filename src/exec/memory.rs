@@ -1,5 +1,4 @@
 use super::{
-    opt_vec::OptVec,
     runtime::{Addr, Instance},
     stack::Stack,
     store::{DataInst, MemInst, Store},
@@ -11,6 +10,7 @@ use crate::{
     binary::{Data, MemArg},
     exec::{runtime::PAGE_SIZE, value::LittleEndian},
 };
+use opt_vec::OptVec;
 
 macro_rules! impl_load {
     ($fnname: ident, $t:ty, $sx:ty) => {

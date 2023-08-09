@@ -1,5 +1,4 @@
 use super::memory::{data_active, data_passiv};
-use super::opt_vec::OptVec;
 use super::runtime::{eval_const, Addr, Runtime, RuntimeError, PAGE_SIZE};
 use super::table::{elem_active, elem_passiv};
 use super::value::{Ref, Value};
@@ -11,6 +10,7 @@ use crate::binary::{Global, GlobalType};
 #[cfg(not(feature = "std"))]
 use crate::lib::*;
 use core::fmt::Debug;
+use opt_vec::OptVec;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum FuncInst {

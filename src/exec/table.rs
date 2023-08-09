@@ -3,13 +3,13 @@ use crate::binary::Elem;
 use crate::lib::*;
 
 use super::{
-    opt_vec::OptVec,
     runtime::{eval_const, Addr, Instance, RuntimeError},
     stack::Stack,
     store::{ElemInst, Store, TableInst},
     trap::Trap,
     value::{Ref, Value},
 };
+use opt_vec::OptVec;
 
 pub fn table_get(
     x: &u32,

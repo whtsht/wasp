@@ -25,3 +25,8 @@ env_logger = "0.9.0"
 alloc = []
 std = ["alloc"]
 default = ["std"]
+
+[dependencies.opt_vec]
+version = "*"
+default-features = false
+features = ["alloc"]
