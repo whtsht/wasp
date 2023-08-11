@@ -1,9 +1,18 @@
 [package]
 name = "wasp"
+description = "A Webassembly interpreter written in Rust without standard library"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+rust-version = "1.56"
+readme = "README.md"
+authors = ["whtsht <whiteshirt0079@gmail.com>"]
+documentation = "https://docs.rs/wasp"
+repository = "https://github.com/whtsht/wasp"
+license = "MIT"
+keywords = ["no_std", "wasm"]
+exclude = [
+    "tests/testsuite/**/*",
+]
 
 [[bin]]
 path = "src/main.rs"
