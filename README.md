@@ -1,6 +1,6 @@
-# wasp
+# wasper
 
-wasp is a WebAssembly interpreter written in Rust without standard library.
+wasper is a WebAssembly interpreter written in Rust without standard library.
 
 ## Spec test
 

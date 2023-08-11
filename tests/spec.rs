@@ -9,11 +9,11 @@ use std::{
     path::PathBuf,
     process::Command,
 };
-use wasp::exec::importer::Importer;
-use wasp::exec::runtime::RuntimeError;
-use wasp::exec::store::Store;
-use wasp::exec::value::LittleEndian;
-use wasp::{
+use wasper::exec::importer::Importer;
+use wasper::exec::runtime::RuntimeError;
+use wasper::exec::store::Store;
+use wasper::exec::value::LittleEndian;
+use wasper::{
     binary::Module,
     exec::{env::Env, runtime::Runtime, value::Value as WValue},
     loader::parser::Parser,
@@ -155,7 +155,7 @@ impl Env for SpecTestEnv {
         &mut self,
         name: &str,
         _params: Vec<WValue>,
-        _memory: Option<&mut wasp::exec::store::MemInst>,
+        _memory: Option<&mut wasper::exec::store::MemInst>,
     ) -> Result<Vec<WValue>, &'static str> {
         if name == "print" {}
         Ok(vec![])

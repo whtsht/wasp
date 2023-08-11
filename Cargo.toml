@@ -1,13 +1,13 @@
 [package]
-name = "wasp"
+name = "wasper"
 description = "A Webassembly interpreter written in Rust without standard library"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.56"
 readme = "README.md"
 authors = ["whtsht <whiteshirt0079@gmail.com>"]
-documentation = "https://docs.rs/wasp"
-repository = "https://github.com/whtsht/wasp"
+documentation = "https://docs.rs/wasper"
+repository = "https://github.com/whtsht/wasper"
 license = "MIT"
 keywords = ["no_std", "wasm"]
 exclude = [
@@ -16,7 +16,7 @@ exclude = [
 
 [[bin]]
 path = "src/main.rs"
-name = "wasp"
+name = "wasper"
 
 [dependencies.num-traits]
 version = "0.2"
