@@ -24,7 +24,7 @@ default-features = false
 features = ["libm"]  
 
 [dev-dependencies]
-wat = "*"
+wat = "1"
 serde_json = "1.0"
 glob = "0.3.1"
 log = "0.4"
@@ -36,6 +36,6 @@ std = ["alloc"]
 default = ["std"]
 
 [dependencies.opt_vec]
-version = "*"
+version = "0.1"
 default-features = false
 features = ["alloc"]
