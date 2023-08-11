@@ -58,12 +58,12 @@ impl Instance {
 
 #[derive(Debug)]
 pub struct Runtime {
-    instrs: Vec<Instr>,
-    instances: Vec<Instance>,
-    root: usize,
-    stack: Stack,
-    pc: usize,
-    env_name: &'static str,
+    pub instrs: Vec<Instr>,
+    pub instances: Vec<Instance>,
+    pub root: usize,
+    pub stack: Stack,
+    pub pc: usize,
+    pub env_name: &'static str,
 }
 
 #[derive(Debug, PartialEq, Eq)]
