@@ -137,15 +137,19 @@ impl Store {
         })
     }
 
-    pub fn allocate_data(&mut self, data: Data) -> Result<Option<Addr>, RuntimeError> {
+    pub fn allocate_data(
+        &mut self,
+        memidx: usize,
+        data: Data,
+    ) -> Result<Option<Addr>, RuntimeError> {
         match &data.mode {
             DataMode::Passive => Ok(Some(data_passiv(&mut self.datas, data))),
-            DataMode::Active { memidx, offset } => {
+            DataMode::Active { offset, .. } => {
                 let offset = match eval_const(&offset)? {
                     Value::I32(v) => v,
                     _ => unreachable!(),
                 } as usize;
-                data_active(&mut self.mems[*memidx as usize], data, offset);
+                data_active(&mut self.mems[memidx], data, offset);
                 Ok(None)
             }
         }

@@ -250,8 +250,9 @@ impl Runtime {
         }
 
         let mut dataaddrs = vec![];
+        let memidx = memaddr.unwrap();
         for data in module.datas {
-            if let Some(addr) = store.allocate_data(data)? {
+            if let Some(addr) = store.allocate_data(memidx, data)? {
                 dataaddrs.push(addr);
             }
         }
