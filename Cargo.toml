@@ -1,7 +1,7 @@
 [package]
 name = "wasper"
 description = "A Webassembly interpreter written in Rust without standard library"
-version = "0.1.1"
+version = "0.1.3"
 edition = "2021"
 rust-version = "1.56"
 readme = "README.md"

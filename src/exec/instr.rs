@@ -1,4 +1,4 @@
-use super::runtime::{InnerExecState, Instance};
+use super::runtime::{ExecState, Instance};
 use super::stack::{Frame, Label, Stack};
 use super::store::{FuncInst, Store};
 use super::table::*;
@@ -18,7 +18,7 @@ pub fn step(
     pc: usize,
     store: &mut Store,
     stack: &mut Stack,
-) -> Result<InnerExecState, Trap> {
+) -> Result<ExecState, Trap> {
     let frame = stack.top_frame().clone();
     let instance = &mut instances[frame.instance_addr];
     match &instrs[pc] {
@@ -63,32 +63,32 @@ pub fn step(
                     pc: end_offset + pc,
                     cont: false,
                 });
-                return Ok(InnerExecState::Continue(else_offset + pc));
+                return Ok(ExecState::Continue(else_offset + pc));
             } else {
-                return Ok(InnerExecState::Continue(end_offset + pc));
+                return Ok(ExecState::Continue(end_offset + pc));
             }
         }
         Instr::Br(l) => {
             if *l as usize >= stack.labels_len() {
                 return match unwind_stack(&frame, stack) {
-                    Some(new_pc) => Ok(InnerExecState::Continue(new_pc)),
-                    None => Ok(InnerExecState::Return),
+                    Some(new_pc) => Ok(ExecState::Continue(new_pc)),
+                    None => Ok(ExecState::Return),
                 };
             }
             let new_pc = stack.jump(*l as usize);
-            return Ok(InnerExecState::Continue(new_pc));
+            return Ok(ExecState::Continue(new_pc));
         }
         Instr::BrIf(l) => {
             let c = stack.pop_value::<i32>();
             if c != 0 {
                 if *l as usize >= stack.labels_len() {
                     return match unwind_stack(&frame, stack) {
-                        Some(new_pc) => Ok(InnerExecState::Continue(new_pc)),
-                        None => Ok(InnerExecState::Return),
+                        Some(new_pc) => Ok(ExecState::Continue(new_pc)),
+                        None => Ok(ExecState::Return),
                     };
                 }
                 let new_pc = stack.jump(*l as usize);
-                return Ok(InnerExecState::Continue(new_pc));
+                return Ok(ExecState::Continue(new_pc));
             }
         }
         Instr::BrTable { indexs, default } => {
@@ -97,28 +97,28 @@ pub fn step(
                 let l = indexs[i] as usize;
                 if l >= stack.labels_len() {
                     return match unwind_stack(&frame, stack) {
-                        Some(new_pc) => Ok(InnerExecState::Continue(new_pc)),
-                        None => Ok(InnerExecState::Return),
+                        Some(new_pc) => Ok(ExecState::Continue(new_pc)),
+                        None => Ok(ExecState::Return),
                     };
                 }
                 let new_pc = stack.jump(indexs[i] as usize);
-                Ok(InnerExecState::Continue(new_pc))
+                Ok(ExecState::Continue(new_pc))
             } else {
                 let l = *default as usize;
                 if l >= stack.labels_len() {
                     return match unwind_stack(&frame, stack) {
-                        Some(new_pc) => Ok(InnerExecState::Continue(new_pc)),
-                        None => Ok(InnerExecState::Return),
+                        Some(new_pc) => Ok(ExecState::Continue(new_pc)),
+                        None => Ok(ExecState::Return),
                     };
                 }
                 let new_pc = stack.jump(l as usize);
-                return Ok(InnerExecState::Continue(new_pc));
+                return Ok(ExecState::Continue(new_pc));
             };
         }
         Instr::Return => {
             return match unwind_stack(&frame, stack) {
-                Some(new_pc) => Ok(InnerExecState::Continue(new_pc)),
-                None => Ok(InnerExecState::Return),
+                Some(new_pc) => Ok(ExecState::Continue(new_pc)),
+                None => Ok(ExecState::Return),
             };
         }
         Instr::Call(a) => {
@@ -540,12 +540,12 @@ pub fn step(
         //////////////////////////
         // Pseudo Instructions ///
         //////////////////////////
-        Instr::RJump(r) => return Ok(InnerExecState::Continue(*r + pc)),
+        Instr::RJump(r) => return Ok(ExecState::Continue(*r + pc)),
         Instr::PopLabel => {
             stack.pop_label();
         }
     }
-    Ok(InnerExecState::Continue(pc + 1))
+    Ok(ExecState::Continue(pc + 1))
 }
 
 pub fn unwind_stack(frame: &Frame, stack: &mut Stack) -> Option<usize> {
@@ -566,7 +566,7 @@ pub fn unwind_stack(frame: &Frame, stack: &mut Stack) -> Option<usize> {
     }
 }
 
-pub fn attach(func: &FuncInst, stack: &mut Stack, pc: usize) -> Result<InnerExecState, Trap> {
+pub fn attach(func: &FuncInst, stack: &mut Stack, pc: usize) -> Result<ExecState, Trap> {
     match func {
         FuncInst::HostFunc { name, functype } => {
             let mut local = vec![];
@@ -575,7 +575,7 @@ pub fn attach(func: &FuncInst, stack: &mut Stack, pc: usize) -> Result<InnerExec
             }
             local.reverse();
 
-            Ok(InnerExecState::EnvFunc {
+            Ok(ExecState::EnvFunc {
                 name: name.clone(),
                 params: local,
             })
@@ -608,7 +608,7 @@ pub fn attach(func: &FuncInst, stack: &mut Stack, pc: usize) -> Result<InnerExec
                 pc: pc + 1,
             };
             stack.push_frame(new_frame);
-            Ok(InnerExecState::Continue(*start))
+            Ok(ExecState::Continue(*start))
         }
     }
 }

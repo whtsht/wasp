@@ -18,13 +18,6 @@ pub const PAGE_SIZE: usize = 65536;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ExecState {
-    Continue,
-    Return,
-    EnvFunc { name: String, params: Vec<Value> },
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum InnerExecState {
     Continue(usize),
     Return,
     EnvFunc { name: String, params: Vec<Value> },
@@ -250,8 +243,8 @@ impl Runtime {
         }
 
         let mut dataaddrs = vec![];
-        let memidx = memaddr.unwrap();
         for data in module.datas {
+            let memidx = memaddr.unwrap();
             if let Some(addr) = store.allocate_data(memidx, data)? {
                 dataaddrs.push(addr);
             }
@@ -387,12 +380,12 @@ impl Runtime {
 
     pub fn start<E: Env>(&mut self, store: &mut Store, env: &mut E) -> Result<(), RuntimeError> {
         match self.attach_start(store)? {
-            InnerExecState::Continue(pc) => {
+            ExecState::Continue(pc) => {
                 self.pc = pc;
                 self.exec(store, env)
                     .map_err(|trap| RuntimeError::Trap(trap))?;
             }
-            InnerExecState::EnvFunc { name, params } => {
+            ExecState::EnvFunc { name, params } => {
                 let instance = &self.instances[self.root];
                 let memory = instance.memaddr.map(|a| &mut store.mems[a]);
                 env.call(&name, params, memory)
@@ -411,13 +404,13 @@ impl Runtime {
         params: Vec<Value>,
     ) -> Result<Vec<Value>, RuntimeError> {
         match self.attach_invoke(store, name, params)? {
-            InnerExecState::Continue(pc) => {
+            ExecState::Continue(pc) => {
                 self.pc = pc;
                 self.exec(store, env)
                     .map_err(|trap| RuntimeError::Trap(trap))
             }
-            InnerExecState::Return => unreachable!(),
-            InnerExecState::EnvFunc { name, params } => {
+            ExecState::Return => unreachable!(),
+            ExecState::EnvFunc { name, params } => {
                 let instance = &self.instances[self.root];
                 let memory = instance.memaddr.map(|a| &mut store.mems[a]);
                 env.call(&name, params, memory)
@@ -426,19 +419,30 @@ impl Runtime {
         }
     }
 
-    pub fn attach_start(&mut self, store: &mut Store) -> Result<InnerExecState, RuntimeError> {
+    fn attach(
+        func: &FuncInst,
+        stack: &mut Stack,
+        pc: &mut usize,
+    ) -> Result<ExecState, RuntimeError> {
+        match attach(func, stack, *pc).map_err(|trap| RuntimeError::Trap(trap)) {
+            Ok(state) => {
+                if let ExecState::Continue(start) = state {
+                    *pc = start;
+                    Ok(state)
+                } else {
+                    Ok(state)
+                }
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    pub fn attach_start(&mut self, store: &mut Store) -> Result<ExecState, RuntimeError> {
         let instance = &self.instances[self.root];
         self.stack = Stack::new();
         if let Some(index) = instance.start {
             let func = &store.funcs[index];
-            if let InnerExecState::Continue(start) =
-                attach(func, &mut self.stack, self.pc).map_err(|trap| RuntimeError::Trap(trap))?
-            {
-                self.pc = start;
-                Ok(InnerExecState::Continue(start))
-            } else {
-                Ok(InnerExecState::Return)
-            }
+            Self::attach(func, &mut self.stack, &mut self.pc)
         } else {
             Err(RuntimeError::NoStartFunction)
         }
@@ -449,7 +453,7 @@ impl Runtime {
         store: &mut Store,
         name: &str,
         params: Vec<Value>,
-    ) -> Result<InnerExecState, RuntimeError> {
+    ) -> Result<ExecState, RuntimeError> {
         let instance = &self.instances[self.root];
         self.stack = Stack::new();
         if let Some(export) = instance
@@ -462,7 +466,7 @@ impl Runtime {
                 ExportDesc::Func(index) => {
                     let func = &store.funcs[instance.funcaddrs[index as usize]];
                     self.stack.extend_values(params);
-                    attach(func, &mut self.stack, self.pc).map_err(|trap| RuntimeError::Trap(trap))
+                    Self::attach(func, &mut self.stack, &mut self.pc)
                 }
                 _ => Err(RuntimeError::NotFound(ImportType::Func(name.into()))),
             }
@@ -471,7 +475,7 @@ impl Runtime {
         }
     }
 
-    pub fn exec<E: Env>(&mut self, store: &mut Store, env: &mut E) -> Result<Vec<Value>, Trap> {
+    fn exec<E: Env>(&mut self, store: &mut Store, env: &mut E) -> Result<Vec<Value>, Trap> {
         loop {
             match step(
                 &mut self.instances,
@@ -480,11 +484,11 @@ impl Runtime {
                 store,
                 &mut self.stack,
             )? {
-                InnerExecState::Continue(pc) => {
+                ExecState::Continue(pc) => {
                     self.pc = pc;
                 }
-                InnerExecState::Return => break,
-                InnerExecState::EnvFunc { params, name } => {
+                ExecState::Return => break,
+                ExecState::EnvFunc { params, name } => {
                     let instance = &self.instances[self.root];
                     let memory = instance.memaddr.map(|a| &mut store.mems[a]);
                     let results = env
@@ -500,45 +504,14 @@ impl Runtime {
         Ok(self.stack.get_returns())
     }
 
-    pub fn attach(&mut self, store: &mut Store) -> Result<ExecState, Trap> {
-        let instance = &self.instances[self.root];
-        self.stack = Stack::new();
-        if let Some(index) = instance.start {
-            let func = &store.funcs[index];
-            match attach(func, &mut self.stack, self.pc)? {
-                InnerExecState::Continue(pc) => {
-                    self.pc = pc;
-                    Ok(ExecState::Continue)
-                }
-                InnerExecState::Return => Ok(ExecState::Return),
-                InnerExecState::EnvFunc { name, params } => {
-                    self.pc += 1;
-                    Ok(ExecState::EnvFunc { name, params })
-                }
-            }
-        } else {
-            Err(Trap::NoStartFunction)
-        }
-    }
-
     pub fn step(&mut self, store: &mut Store) -> Result<ExecState, Trap> {
-        match step(
+        step(
             &mut self.instances,
             &self.instrs,
             self.pc,
             store,
             &mut self.stack,
-        )? {
-            InnerExecState::Continue(pc) => {
-                self.pc = pc;
-                Ok(ExecState::Continue)
-            }
-            InnerExecState::Return => Ok(ExecState::Return),
-            InnerExecState::EnvFunc { name, params } => {
-                self.pc += 1;
-                Ok(ExecState::EnvFunc { name, params })
-            }
-        }
+        )
     }
 
     pub fn set_results(&mut self, results: Vec<Value>) {
