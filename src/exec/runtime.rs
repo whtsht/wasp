@@ -505,13 +505,26 @@ impl Runtime {
     }
 
     pub fn step(&mut self, store: &mut Store) -> Result<ExecState, Trap> {
-        step(
+        match step(
             &mut self.instances,
             &self.instrs,
             self.pc,
             store,
             &mut self.stack,
-        )
+        ) {
+            Ok(state) => {
+                if let ExecState::Continue(next) = state {
+                    self.pc = next;
+                    Ok(state)
+                } else if let ExecState::EnvFunc { .. } = state {
+                    self.pc += 1;
+                    Ok(state)
+                } else {
+                    Ok(state)
+                }
+            }
+            Err(err) => Err(err),
+        }
     }
 
     pub fn set_results(&mut self, results: Vec<Value>) {

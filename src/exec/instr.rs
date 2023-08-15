@@ -122,7 +122,8 @@ pub fn step(
             };
         }
         Instr::Call(a) => {
-            let func = &store.funcs[*a as usize];
+            let addr = instance.funcaddrs[*a as usize];
+            let func = &store.funcs[addr];
 
             return attach(func, stack, pc);
         }
